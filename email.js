@@ -382,17 +382,17 @@ async function notifyOnFailure(opts) {
   }
 }
 
-// ─── Shared OAuth2 Client (for People API and other Google services) ───────
+// ─── Google OAuth2 Token (direct HTTPS, Railway-safe) ─────────────────────
 
-let cachedOAuth2Client = null;
+let cachedCreds = null;
+let cachedToken = null;
 
 /**
- * Get a raw Google OAuth2 client with auto-refresh.
- * Useful for People API, Drive API, etc. where the Gmail client isn't enough.
- * @returns {Promise<object|null>} OAuth2 client or null
+ * Load Google OAuth2 credentials from env vars or local files.
+ * Shared by getGoogleAccessToken() and getGoogleOAuth2Client().
  */
-async function getGoogleOAuth2Client() {
-  if (cachedOAuth2Client) return cachedOAuth2Client;
+function loadGoogleCreds() {
+  if (cachedCreds) return cachedCreds;
 
   let credentials, token;
 
@@ -418,15 +418,106 @@ async function getGoogleOAuth2Client() {
   }
 
   if (!credentials || !token) {
-    console.log('[shared/email] OAuth2 credentials not found');
+    console.log('[shared/email] Google OAuth2 credentials not found');
     return null;
   }
 
-  const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web || credentials;
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris?.[0] || 'http://localhost');
-  oAuth2Client.setCredentials(token);
+  cachedCreds = credentials;
+  cachedToken = token;
+  return { credentials, token };
+}
 
-  // Auto-refresh if needed
+/**
+ * Get a Google OAuth2 access token using direct HTTPS POST.
+ * No googleapis SDK dependency — uses Node https module (same pattern as dropboxFetch).
+ * Safe on Railway with Node 24 (avoids HTTP/2 premature close issues in googleapis).
+ *
+ * @returns {Promise<string>} Access token string
+ */
+async function getGoogleAccessToken() {
+  const creds = loadGoogleCreds();
+  if (!creds) throw new Error('Google OAuth2 credentials not configured');
+
+  const { client_secret, client_id } = creds.credentials.installed || creds.credentials.web || creds.credentials;
+  const refreshToken = creds.token.refresh_token;
+
+  if (!refreshToken) {
+    // Try fresh from the loaded token
+    if (creds.token.access_token && creds.token.expiry_date > Date.now()) {
+      return creds.token.access_token;
+    }
+    throw new Error('No refresh_token available for Google OAuth2');
+  }
+
+  // Check if current token is still valid (with 5-min buffer)
+  const now = Date.now();
+  const expiryMs = creds.token.expiry_date || 0;
+  if (now < expiryMs - 300000 && creds.token.access_token) {
+    console.log('[shared/email] Google token still valid, using cached');
+    return creds.token.access_token;
+  }
+
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: client_id,
+      client_secret: client_secret,
+    }).toString();
+
+    const req = https.request('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          if (j.access_token) {
+            // Update cached token with new expiry for future calls
+            j.refresh_token = refreshToken;
+            j.expiry_date = now + (j.expires_in || 3600) * 1000;
+            cachedToken = j;
+            // Persist back to env var for process lifetime
+            if (process.env.GMAIL_TOKEN_JSON) {
+              process.env.GMAIL_TOKEN_JSON = JSON.stringify(j);
+            }
+            resolve(j.access_token);
+          } else {
+            reject(new Error(j.error_description || j.error || 'OAuth2 token refresh failed'));
+          }
+        } catch (e) {
+          reject(new Error('OAuth2 token refresh parse error: ' + e.message));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+// ─── Shared OAuth2 Client (local Mac use only — uses googleapis SDK) ───────
+
+let cachedOAuth2Client = null;
+
+/**
+ * Get a raw Google OAuth2 client with auto-refresh.
+ * Uses googleapis SDK — works locally on Mac but may fail on Railway (Node 24 HTTP/2 issues).
+ * For Railway services, use getGoogleAccessToken() instead.
+ * @returns {Promise<object|null>} OAuth2 client or null
+ */
+async function getGoogleOAuth2Client() {
+  if (cachedOAuth2Client) return cachedOAuth2Client;
+
+  const creds = loadGoogleCreds();
+  if (!creds) return null;
+
+  const { client_secret, client_id, redirect_uris } = creds.credentials.installed || creds.credentials.web || creds.credentials;
+  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris?.[0] || 'http://localhost');
+  oAuth2Client.setCredentials(creds.token);
+
   oAuth2Client.on('tokens', (tokens) => {
     if (tokens.refresh_token) {
       console.log('[shared/email] OAuth2 token auto-refreshed (raw client)');
@@ -439,6 +530,7 @@ async function getGoogleOAuth2Client() {
 
 module.exports = {
   getGmailClient,
+  getGoogleAccessToken,
   getGoogleOAuth2Client,
   buildEmailBody,
   buildHeaderLogoTag,
