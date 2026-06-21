@@ -1,0 +1,18 @@
+{
+  "shared_version": "1.0.0",
+  "modules": {
+    "config.js": "1.0.1",
+    "data.js": "1.0.0",
+    "db.js": "1.0.0",
+    "dropbox.js": "1.0.0",
+    "email.js": "1.0.0",
+    "esign.js": "1.0.0",
+    "harvest.js": "1.0.0",
+    "notify.js": "1.0.0",
+    "pdf.js": "1.0.0",
+    "team.js": "1.0.0",
+    "trello.js": "1.0.0"
+  },
+  "note": "logger.js removed 2026-06-18 — was unused by any skill",
+  "updated": "2026-06-18"
+}
