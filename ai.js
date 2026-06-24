@@ -77,8 +77,10 @@ async function callAI(opts) {
   const maxTokens = opts.maxTokens || 4000;
   const model = opts.model || DEFAULT_MODEL;
 
+  // Strip OpenClaw-style provider prefix (deepseek/ -> deepseek-v4-flash)
+  const cleanModel = model.replace(/^[a-z]+\//, '');
   const payload = {
-    model: model,
+    model: cleanModel,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: message },
@@ -110,7 +112,7 @@ async function callAI(opts) {
   if (OPENAI_KEY) {
     try {
       console.log('[shared/ai] Calling OpenAI API');
-      payload.model = model.replace(/^deepseek\/deepseek/, 'gpt-4o-mini');
+      payload.model = 'gpt-4o-mini';
       const res = await httpsPost(
         'https://api.openai.com/v1/chat/completions',
         {

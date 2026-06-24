@@ -1,0 +1,265 @@
+// =============================================================================
+// task-chain.js — Shared task chain filtering and population module
+// Used by entry_actions_server.js and _callable/populate_task_chain.js
+// =============================================================================
+'use strict';
+
+const trello = require('./trello');
+const ZPT_BOARD_ID = '66f2e19a4dd7012acc370148';
+
+// ─── Phase / List Helpers ─────────────────────────────────────────────────
+
+const LIST_CACHE = new Map();
+const CACHE_TTL_MS = 300000;
+let allZptCardsCache = null;
+let allZptCardsTs = 0;
+
+function normalizePhase(name) {
+  return (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function getPhaseFromListName(listName) {
+  var idx = listName.indexOf('|');
+  return idx >= 0 ? listName.slice(0, idx).trim() : listName.trim();
+}
+
+function getSubphaseName(listName) {
+  var idx = listName.indexOf('|');
+  return idx >= 0 ? listName.slice(idx + 1).trim() : '';
+}
+
+async function getBoardLists(boardId) {
+  var cached = LIST_CACHE.get(boardId);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.map;
+  var lists = await trello.trelloGet('/boards/' + boardId + '/lists?fields=name,id,pos');
+  var map = new Map();
+  for (var i = 0; i < lists.length; i++) {
+    var l = lists[i];
+    map.set(normalizePhase(l.name), { id: l.id, name: l.name, pos: l.pos });
+  }
+  LIST_CACHE.set(boardId, { map: map, ts: Date.now() });
+  return map;
+}
+
+function getCardPhases(card) {
+  var desc = card.desc || '';
+  var m = desc.match(/##\s*Phases\s*\n([\s\S]*?)(?=\n##|\n---|\n$|$)/i);
+  var phases = ['leads'];
+  if (!m) return phases;
+  var lines = m[1].trim().split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var name = normalizePhase(lines[i].replace(/^[-*]\s*/, ''));
+    if (name && name !== 'leads') phases.push(name);
+  }
+  return phases;
+}
+
+async function findZptListsForPhase(phaseName) {
+  var n = normalizePhase(phaseName);
+  var zptLists = await getBoardLists(ZPT_BOARD_ID);
+  var matches = [];
+  for (var entry of zptLists) {
+    var normalizedName = entry[0];
+    var data = entry[1];
+    if (normalizedName === n || normalizedName.startsWith(n + ' |')) {
+      matches.push({ listId: data.id, listName: data.name, pos: data.pos });
+    }
+  }
+  return matches.sort(function(a, b) { return a.pos - b.pos; });
+}
+
+async function findFirstSubphase(phaseName) {
+  var lists = await findZptListsForPhase(phaseName);
+  return lists.length > 0 ? lists[0].listName : null;
+}
+
+// ─── Task Chain Filtering ─────────────────────────────────────────────────
+
+async function getAllZptCards() {
+  if (allZptCardsCache && Date.now() - allZptCardsTs < CACHE_TTL_MS) return allZptCardsCache;
+  var lists = await getBoardLists(ZPT_BOARD_ID);
+  var allCards = [];
+  for (var entry of lists) {
+    var listData = entry[1];
+    var cards = await trello.trelloGet('/lists/' + listData.id + '/cards?fields=name,desc,shortLink,labels,pos,idList,shortUrl');
+    for (var c = 0; c < cards.length; c++) {
+      var card = cards[c];
+      if (card.closed) continue;
+      allCards.push({
+        name: card.name,
+        desc: card.desc,
+        shortLink: card.shortLink,
+        labels: card.labels || [],
+        pos: card.pos,
+        idList: card.idList,
+        shortUrl: card.shortUrl,
+        _listId: listData.id,
+        _listName: listData.name,
+        _listPos: listData.pos
+      });
+    }
+  }
+  allCards.sort(function(a, b) {
+    if (a._listPos !== b._listPos) return a._listPos - b._listPos;
+    return a.pos - b.pos;
+  });
+  allZptCardsCache = allCards;
+  allZptCardsTs = Date.now();
+  return allCards;
+}
+
+async function getFilteredTaskChain(card, phaseWhitelist) {
+  // phaseWhitelist: optional array of phase names to restrict to (e.g., just ['leads'])
+  // If omitted, all phases from card's ## Phases section are used.
+  var phases = phaseWhitelist ? phaseWhitelist.slice() : getCardPhases(card);
+  // Always include leads for leads-phase ZPTB cards
+  if (phases.indexOf('leads') < 0) phases.unshift('leads');
+  var phaseLabels = new Set(phases.map(function(p) { return normalizePhase(p); }));
+  var projectLabels = (card.labels || []).map(function(l) { return l.name.toLowerCase(); });
+  var allCards = await getAllZptCards();
+  var zptLists = await getBoardLists(ZPT_BOARD_ID);
+  var result = [];
+  for (var i = 0; i < allCards.length; i++) {
+    var zc = allCards[i];
+    var cardPhase = null;
+    for (var entry of zptLists) {
+      var normalizedName = entry[0];
+      var listData = entry[1];
+      if (listData.id === zc._listId) {
+        if (normalizedName === zc._listName || zc._listName.startsWith(normalizedName + ' |')) {
+          cardPhase = normalizePhase(getPhaseFromListName(zc._listName));
+        }
+        break;
+      }
+    }
+    // Leads ZPTB cards are universal - skip phase check
+    if (cardPhase !== 'leads' && (!cardPhase || !phaseLabels.has(cardPhase))) continue;
+    var zptLabels = (zc.labels || []).map(function(l) { return l.name.toLowerCase(); });
+    if (zptLabels.length > 0 && !zptLabels.some(function(l) { return projectLabels.includes(l); })) continue;
+    result.push({
+      zptCard: zc,
+      phaseName: cardPhase,
+      subphaseName: getSubphaseName(zc._listName),
+      listId: zc._listId,
+      listName: zc._listName
+    });
+  }
+  return result;
+}
+
+// ─── Checkitem Population ─────────────────────────────────────────────────
+
+function extractShortLinkFromCheckitem(rawName) {
+  var m = rawName.match(/^\[.+?\]\(https?:\/\/trello\.com\/c\/([a-zA-Z0-9]+)\)/);
+  return m ? m[1] : null;
+}
+
+async function getExistingZptCardIds(cardId) {
+  var ids = new Set();
+  try {
+    var cls = await trello.getChecklists(cardId);
+    for (var i = 0; i < cls.length; i++) {
+      var items = cls[i].checkItems || [];
+      for (var j = 0; j < items.length; j++) {
+        var sl = extractShortLinkFromCheckitem(items[j].name);
+        if (sl) ids.add(sl);
+      }
+    }
+  } catch (e) {}
+  return ids;
+}
+
+async function isTaskChainPopulated(cardId) {
+  var existing = await getExistingZptCardIds(cardId);
+  return existing.size > 0;
+}
+
+async function setCheckitemState(cardId, checkItemId, state) {
+  await trello.trelloPut('/cards/' + cardId + '/checkItem/' + checkItemId, { state: state });
+}
+
+async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
+  var total = taskChain.length;
+  var added = 0;
+
+  var currentSubphaseStart = -1;
+  var currentSubphaseEnd = -1;
+  if (entrySubphaseListName) {
+    for (var i = 0; i < total; i++) {
+      if (taskChain[i].listName === entrySubphaseListName) {
+        if (currentSubphaseStart === -1) currentSubphaseStart = i;
+        currentSubphaseEnd = i;
+      } else if (currentSubphaseEnd >= 0) {
+        break;
+      }
+    }
+  }
+
+  var cardData = await trello.getChecklists(card.id);
+  var checklistId = null;
+  if (cardData.length > 0) {
+    checklistId = cardData[0].id;
+  } else {
+    var newCl = await trello.trelloPost('/cards/' + card.id + '/checklists', { name: 'ZPT tasks' });
+    checklistId = newCl.id;
+  }
+
+  var addedItems = [];
+  for (var i = 0; i < total; i++) {
+    var item = taskChain[i];
+    var url = item.zptCard.shortUrl || 'https://trello.com/c/' + item.zptCard.shortLink;
+    var newItem = await trello.trelloPost('/checklists/' + checklistId + '/checkItems', {
+      name: '[' + item.zptCard.name + '](' + url + ')'
+    });
+    addedItems.push({ item: item, checkItemId: newItem.id });
+    added++;
+  }
+
+  if (currentSubphaseStart >= 0) {
+    for (var i = 0; i < total; i++) {
+      if (i >= currentSubphaseStart && i <= currentSubphaseEnd) continue;
+      if (addedItems[i] && addedItems[i].checkItemId) {
+        await setCheckitemState(card.id, addedItems[i].checkItemId, 'complete');
+      }
+    }
+  }
+
+  // Write metadata
+  try {
+    var currentCard = await trello.getCard(card.id);
+    var desc = currentCard.desc || '';
+    var totalStr = 'chain_total=' + total;
+    var startStr = currentSubphaseStart >= 0 ? 'current_start=' + currentSubphaseStart : '';
+    var endStr = currentSubphaseEnd >= 0 ? 'current_end=' + currentSubphaseEnd : '';
+    var subStr = entrySubphaseListName ? 'entry_subphase=' + entrySubphaseListName : '';
+    var meta = [totalStr, startStr, endStr, subStr].filter(Boolean).join('\n');
+    if (desc.indexOf('## Task Chain') >= 0) {
+      desc = desc.replace(/## Task Chain[\s\S]*?(?=\n##|\n$|$)/, '## Task Chain\n' + meta);
+    } else {
+      desc = desc.trim() + '\n\n## Task Chain\n' + meta;
+    }
+    await trello.updateCard(card.id, { desc: desc });
+  } catch (e) {
+    console.error('[task-chain] Failed to write meta: ' + e.message);
+  }
+
+  await trello.addComment(card.id, 'ZPT tasks added: ' + total + ' items.');
+  console.log('[task-chain] Populated ' + added + ' items for "' + card.name + '"');
+  return { added: added, total: total };
+}
+
+module.exports = {
+  normalizePhase,
+  getPhaseFromListName,
+  getSubphaseName,
+  getBoardLists,
+  getCardPhases,
+  findZptListsForPhase,
+  findFirstSubphase,
+  getAllZptCards,
+  getFilteredTaskChain,
+  extractShortLinkFromCheckitem,
+  getExistingZptCardIds,
+  isTaskChainPopulated,
+  populateEntireTaskChain,
+};

@@ -74,42 +74,47 @@ const PHOTO_URLS = {
  * @returns {string|null} Bio text or null
  */
 function extractBio(html, name) {
-  // Find the name in the HTML (e.g., "<strong>kassia zinn</strong>")
-  const namePattern = new RegExp(
-    `<strong>\\s*${escapeRegex(name)}\\s*</strong>`,
-    'i'
-  );
-  const nameMatch = namePattern.exec(html);
-  if (!nameMatch) return null;
+  // Each team member lives in its own <div class="sqs-html-content">.
+  // Find the div that contains this member's <strong>name</strong>,
+  // then extract <p class="sqsrte-large"> paragraphs from within that div only.
+  const divPattern = /<div[^>]*class="[^"]*sqs-html-content[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  let divMatch;
+  while ((divMatch = divPattern.exec(html)) !== null) {
+    const block = divMatch[1];
+    // Check if this block contains the name
+    const nameInBlock = new RegExp(
+      `<strong>\\s*${escapeRegex(name)}\\s*</strong>`,
+      'i'
+    );
+    if (!nameInBlock.test(block)) continue;
 
-  const afterNameStart = nameMatch.index + nameMatch[0].length;
-  // Collect all following <p class="sqsrte-large"> paragraphs until a </div> or next strong name
-  const bioParagraphs = [];
-  const paraPattern = /<p[^>]*class="[^"]*sqsrte-large[^"]*"[^>]*>(.*?)<\/p>/gi;
-  
-  // Search from after the name
-  const searchFrom = html.slice(afterNameStart);
-  let match;
-  while ((match = paraPattern.exec(searchFrom)) !== null) {
-    const text = match[1]
-      .replace(/<[^>]+>/g, '')       // strip HTML tags
-      .replace(/&nbsp;/g, ' ')       // decode &nbsp;
-      .replace(/&amp;/g, '&')        // decode &amp;
-      .replace(/&lt;/g, '<')         // decode &lt;
-      .replace(/&gt;/g, '>')         // decode &gt;
-      .replace(/&[a-z]+;/g, ' ')     // strip other entities
-      .replace(/\s+/g, ' ')          // collapse whitespace
-      .trim();
+    // Extract all sqsrte-large paragraphs within this div
+    const paraPattern = /<p[^>]*class="[^"]*sqsrte-large[^"]*"[^>]*>(.*?)<\/p>/gi;
+    const paragraphs = [];
+    let paraMatch;
+    while ((paraMatch = paraPattern.exec(block)) !== null) {
+      let text = paraMatch[1]
+        .replace(/<[^>]+>/g, '')       // strip HTML tags
+        .replace(/&nbsp;/g, ' ')       // decode &nbsp;
+        .replace(/&amp;/g, '&')        // decode &amp;
+        .replace(/&lt;/g, '<')         // decode &lt;
+        .replace(/&gt;/g, '>')         // decode &gt;
+        .replace(/&[a-z]+;/g, ' ')     // strip other entities
+        .replace(/\s+/g, ' ')          // collapse whitespace
+        .trim();
 
-    // Stop if we hit another member name (next strong)
-    if (isNextMemberName(match[0])) break;
+      // Strip the name itself if it appears in this paragraph (e.g. Hannah's inline layout)
+      text = text.replace(new RegExp(escapeRegex(name), 'gi'), '').trim();
 
-    if (text.length > 20) {          // skip tiny fragments
-      bioParagraphs.push(text);
+      if (text.length > 20) {
+        paragraphs.push(text);
+      }
     }
+
+    return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
   }
 
-  return bioParagraphs.length > 0 ? bioParagraphs.join('\n\n') : null;
+  return null;
 }
 
 /**
@@ -119,19 +124,7 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Check if a string contains a known member name (indicating next section).
- */
-function isNextMemberName(text) {
-  const lower = text.toLowerCase();
-  return MEMBER_KEYS.some(key => {
-    const name = MEMBER_NAMES[key].toLowerCase();
-    // Check if the text contains this member's full name
-    return lower.includes(name) &&
-           // But not the one we were looking for
-           !lower.includes('<strong>');
-  });
-}
+
 
 /**
  * Extract photo URL for a team member from the page HTML.

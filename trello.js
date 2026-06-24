@@ -448,6 +448,8 @@ function parseFeeLines(feeSection) {
 }
 
 module.exports = {
+  trelloGet,
+  trelloPost,
   getCard,
   getCardsInList,
   getList,
