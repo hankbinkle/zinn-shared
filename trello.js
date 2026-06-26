@@ -380,12 +380,16 @@ function buildClientGreeting(clientSection) {
     .map(l => l.replace(/^[-*•]\s*/, '').trim())
     .filter(Boolean);
 
-  // Filter out emails, phone numbers, company suffixes, URLs
+  // Filter out emails, phone numbers, addresses, URLs, and dashes
   const nameLines = allLines.filter(l =>
     !/@/.test(l) &&
     !/\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/.test(l) &&
-    !/^(https?:\/\/)/i.test(l)
+    !/^(https?:\/\/)/i.test(l) &&
+    !/^[-]{2,}$/.test(l.trim()) &&
+    !/^\d+\s/.test(l) // street addresses start with a number
   );
+
+  if (nameLines.length === 0) return 'Hello,';
 
   // Check for an attention: line (company client)
   const attentionLine = nameLines.find(l => /^attention:/i.test(l) || /^attn:/i.test(l));
@@ -393,7 +397,7 @@ function buildClientGreeting(clientSection) {
     const match = attentionLine.match(/:(.+)/);
     if (match) {
       const firstName = match[1].trim().split(' ')[0];
-      return `Hello ${firstName},`;
+      return 'Hello ' + firstName + ',';
     }
   }
 
@@ -402,24 +406,24 @@ function buildClientGreeting(clientSection) {
 
   if (cleaned.length === 0) return 'Hello,';
 
-  // Join multiple client names with " and " for proper greeting parsing
-  const combined = cleaned.join(' and ');
+  // Extract first names
+  const firstNames = cleaned.map(function(l) {
+    return l.trim().split(' ')[0];
+  }).filter(Boolean);
 
-  // Split on " and " or commas to get individual full names
-  const parts = combined.split(/\s+and\s+|,\s*/).filter(Boolean);
-  if (parts.length <= 1) return `Hello ${(parts[0] || '').trim().split(' ')[0]},`.replace(',,', ',');
+  if (firstNames.length === 0) return 'Hello,';
+  if (firstNames.length === 1) return 'Hello ' + firstNames[0] + ',';
 
-  // Simple heuristic: female names first
-  const femaleNames = ['Teresa', 'Mary', 'Ann', 'Anne', 'Katherine', 'Elizabeth', 'Sarah', 'Jessica', 'Jennifer', 'Linda', 'Patricia', 'Susan', 'Lisa', 'Nancy', 'Karen', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura', 'Amanda', 'Melissa', 'Deborah', 'Stephanie', 'Rebecca', 'Shirley', 'Cynthia', 'Kathleen', 'Amy', 'Angela', 'Anna', 'Brenda', 'Pamela', 'Emma', 'Nicole', 'Samantha', 'Katherine', 'Christine', 'Debra', 'Rachel', 'Carolyn', 'Janet', 'Catherine', 'Maria', 'Heather', 'Diane', 'Ruby', 'Julie', 'Joyce', 'Evelyn', 'Joan', 'Victoria', 'Kelly', 'Christina', 'Lauren', 'Frances', 'Martha', 'Judith', 'Cheryl', 'Megan', 'Andrea', 'Olivia', 'Sophia', 'Isabella', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Ella', 'Avery', 'Scarlett', 'Grace', 'Chloe', 'Victoria', 'Riley', 'Aria', 'Lily', 'Aurora', 'Zoey', 'Nora', 'Camila', 'Penelope', 'Layla', 'Luna', 'Stella', 'Eliana', 'Hannah', 'Maya', 'Naomi', 'Ellie', 'Sadie', 'Aubrey', 'Claire', 'Alice', 'Eva', 'Hailey', 'Kaylee', 'Alyssa', 'Brianna', 'Julia', 'Kassia', 'Lindsay', 'Robin', 'Shukry', 'Shireen'];
-  const firstNames = parts.map(p => p.trim().split(' ')[0]);
-  const sorted = [...firstNames].sort((a, b) => {
-    const aF = femaleNames.includes(a) ? 0 : 1;
-    const bF = femaleNames.includes(b) ? 0 : 1;
+  // Female-first heuristic for multiple clients
+  var femaleNames = ['Teresa', 'Mary', 'Ann', 'Anne', 'Katherine', 'Elizabeth', 'Sarah', 'Jessica', 'Jennifer', 'Linda', 'Patricia', 'Susan', 'Lisa', 'Nancy', 'Karen', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura', 'Amanda', 'Melissa', 'Deborah', 'Stephanie', 'Rebecca', 'Shirley', 'Cynthia', 'Kathleen', 'Amy', 'Angela', 'Anna', 'Brenda', 'Pamela', 'Emma', 'Nicole', 'Samantha', 'Katherine', 'Christine', 'Debra', 'Rachel', 'Carolyn', 'Janet', 'Catherine', 'Maria', 'Heather', 'Diane', 'Ruby', 'Julie', 'Joyce', 'Evelyn', 'Joan', 'Victoria', 'Kelly', 'Christina', 'Lauren', 'Frances', 'Martha', 'Judith', 'Cheryl', 'Megan', 'Andrea', 'Olivia', 'Sophia', 'Isabella', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Ella', 'Avery', 'Scarlett', 'Grace', 'Chloe', 'Victoria', 'Riley', 'Aria', 'Lily', 'Aurora', 'Zoey', 'Nora', 'Camila', 'Penelope', 'Layla', 'Luna', 'Stella', 'Eliana', 'Hannah', 'Maya', 'Naomi', 'Ellie', 'Sadie', 'Aubrey', 'Claire', 'Alice', 'Eva', 'Hailey', 'Kaylee', 'Alyssa', 'Brianna', 'Julia', 'Kassia', 'Lindsay', 'Robin', 'Shukry', 'Shireen', 'Taylor', 'Casey'];
+  var sorted = [].concat(firstNames).sort(function(a, b) {
+    var aF = femaleNames.indexOf(a) >= 0 ? 0 : 1;
+    var bF = femaleNames.indexOf(b) >= 0 ? 0 : 1;
     return aF - bF;
   });
 
-  if (sorted.length === 2) return `Hello ${sorted[0]} and ${sorted[1]},`;
-  return `Hello ${sorted.slice(0, -1).join(', ')}, and ${sorted[sorted.length - 1]},`;
+  if (sorted.length === 2) return 'Hello ' + sorted[0] + ' and ' + sorted[1] + ',';
+  return 'Hello ' + sorted.slice(0, -1).join(', ') + ', and ' + sorted[sorted.length - 1] + ',';
 }
 
 /**
@@ -450,6 +454,7 @@ function parseFeeLines(feeSection) {
 module.exports = {
   trelloGet,
   trelloPost,
+  trelloPut,
   getCard,
   getCardsInList,
   getList,

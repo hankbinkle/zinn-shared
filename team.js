@@ -24,7 +24,7 @@ const MEMBER_KEYS = ['kassia', 'rob', 'hannah', 'robin', 'daniel'];
 
 const MEMBER_NAMES = {
   kassia: 'Kassia Zinn',
-  rob:    'Rob Zinn, AIA NCARB',
+  rob:    'Rob Zinn, AIA',
   hannah: 'Hannah Jensen',
   robin:  'Robin Tuazon',
   daniel: 'Daniel Paul',

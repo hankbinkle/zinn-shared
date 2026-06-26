@@ -204,14 +204,31 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
     checklistId = newCl.id;
   }
 
+  // Check for existing ZPT checkitems to avoid duplicates
+  var existingShortLinks = new Set();
+  try {
+    var existing = await getExistingZptCardIds(card.id);
+    for (var sl of existing) existingShortLinks.add(sl);
+  } catch (_) {}
+
   var addedItems = [];
   for (var i = 0; i < total; i++) {
     var item = taskChain[i];
-    var url = item.zptCard.shortUrl || 'https://trello.com/c/' + item.zptCard.shortLink;
+    var sl = item.zptCard.shortLink;
+    var url = item.zptCard.shortUrl || 'https://trello.com/c/' + sl;
+    var itemName = '[' + item.zptCard.name + '](' + url + ')';
+
+    if (existingShortLinks.has(sl)) {
+      console.log('[task-chain] Skipping duplicate: ' + sl + ' (' + item.zptCard.name + ')');
+      addedItems.push(null);
+      continue;
+    }
+
     var newItem = await trello.trelloPost('/checklists/' + checklistId + '/checkItems', {
-      name: '[' + item.zptCard.name + '](' + url + ')'
+      name: itemName
     });
     addedItems.push({ item: item, checkItemId: newItem.id });
+    existingShortLinks.add(sl);
     added++;
   }
 
@@ -224,26 +241,9 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
     }
   }
 
-  // Write metadata
-  try {
-    var currentCard = await trello.getCard(card.id);
-    var desc = currentCard.desc || '';
-    var totalStr = 'chain_total=' + total;
-    var startStr = currentSubphaseStart >= 0 ? 'current_start=' + currentSubphaseStart : '';
-    var endStr = currentSubphaseEnd >= 0 ? 'current_end=' + currentSubphaseEnd : '';
-    var subStr = entrySubphaseListName ? 'entry_subphase=' + entrySubphaseListName : '';
-    var meta = [totalStr, startStr, endStr, subStr].filter(Boolean).join('\n');
-    if (desc.indexOf('## Task Chain') >= 0) {
-      desc = desc.replace(/## Task Chain[\s\S]*?(?=\n##|\n$|$)/, '## Task Chain\n' + meta);
-    } else {
-      desc = desc.trim() + '\n\n## Task Chain\n' + meta;
-    }
-    await trello.updateCard(card.id, { desc: desc });
-  } catch (e) {
-    console.error('[task-chain] Failed to write meta: ' + e.message);
-  }
+  // Note: Task Chain metadata section removed -- checkitem-based tracking is the source of truth
 
-  await trello.addComment(card.id, 'ZPT tasks added: ' + total + ' items.');
+  await trello.addComment(card.id, 'ZPT tasks added: ' + added + ' items.');
   console.log('[task-chain] Populated ' + added + ' items for "' + card.name + '"');
   return { added: added, total: total };
 }
