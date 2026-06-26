@@ -120,11 +120,21 @@ function buildEmailBody(contentHtml, opts = {}) {
   const panelColor = '#ffffff';
   const textColor = '#242C39';
 
+  // Optionally add logo header row
+  var logoRow = '';
+  if (opts.logo) {
+    var logoT = buildHeaderLogoTag(opts.logoBuffer);
+    if (logoT.html) {
+      logoRow = '<tr><td style="padding:0 0 24px 0;">' + logoT.html + '</td></tr>';
+    }
+  }
+
   return [
     '<div style="background:' + bgColor + ';padding:40px 20px;font-family:' + font + ';">',
     '  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;margin:0 auto;">',
     '    <tr><td style="background:' + panelColor + ';padding:32px 40px;border-radius:4px;">',
     '      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">',
+             logoRow,
     '        <tr><td style="padding:0 0 24px 0;">',
     '          <div style="font-family:' + font + ';font-size:14px;color:' + textColor + ';line-height:1.8;">' + contentHtml + '</div>',
     '        </td></tr>',
