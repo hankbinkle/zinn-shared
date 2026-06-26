@@ -406,8 +406,21 @@ function buildClientGreeting(clientSection) {
 
   if (cleaned.length === 0) return 'Hello,';
 
+  // Expand "X and Y Lastname" lines into separate names
+  const expanded = [];
+  for (const name of cleaned) {
+    if (/\s+and\s+/i.test(name)) {
+      const parts = name.split(/\s+and\s+/i);
+      for (const part of parts) {
+        expanded.push(part.trim());
+      }
+    } else {
+      expanded.push(name);
+    }
+  }
+
   // Extract first names
-  const firstNames = cleaned.map(function(l) {
+  const firstNames = expanded.map(function(l) {
     return l.trim().split(' ')[0];
   }).filter(Boolean);
 

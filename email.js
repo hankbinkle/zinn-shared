@@ -126,7 +126,7 @@ function buildEmailBody(contentHtml, opts = {}) {
     '    <tr><td style="background:' + panelColor + ';padding:32px 40px;border-radius:4px;">',
     '      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">',
     '        <tr><td style="padding:0 0 24px 0;">',
-    '          <p style="font-family:' + font + ';font-size:14px;color:' + textColor + ';line-height:1.8;margin:0;">' + contentHtml + '</p>',
+    '          <div style="font-family:' + font + ';font-size:14px;color:' + textColor + ';line-height:1.8;">' + contentHtml + '</div>',
     '        </td></tr>',
     '        <tr><td style="padding:0;"></td></tr>',
     '      </table>',
@@ -154,7 +154,7 @@ function buildDocumentEmail(contentHtml, opts = {}) {
 
   let greetingHtml = '';
   if (opts.recipientName) {
-    greetingHtml = '<p style="font-family:' + FONT + ';font-size:14px;color:#242C39;margin:0 0 20px 0;">Hello ' + opts.recipientName + ',</p>';
+    greetingHtml = '<p style="font-family:' + FONT + ';font-size:14px;color:#242C39;margin:0 0 20px 0;">Hello ' + opts.recipientName + ',</div>';
   }
 
   const parts = [
@@ -171,12 +171,12 @@ function buildDocumentEmail(contentHtml, opts = {}) {
     '        ' + (opts.introHtml || ''),
               contentHtml,
     '        <div style="border-top:1px solid #E0E8EC;margin:24px 0 20px 0;"></div>',
-    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 4px 0;font-weight:600;">Rob Zinn, AIA</p>',
-    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 2px 0;"><a href="https://zinn.ai" style="color:#242C39;text-decoration:none;">zinn.ai</a></p>',
-    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0;">904.257.6117</p>',
+    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 4px 0;font-weight:600;">Rob Zinn, AIA</div>',
+    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 2px 0;"><a href="https://zinn.ai" style="color:#242C39;text-decoration:none;">zinn.ai</a></div>',
+    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0;">904.257.6117</div>',
     '      </td></tr>',
     '      <tr><td style="background-color:#f0f0f0;padding:16px 40px;border-top:1px solid #E0E8EC;">',
-    '        <p style="font-family:' + FONT + ';font-size:11px;color:#81A2B2;margin:0;text-align:center;">1022 park street #407, jacksonville, FL 32204 &nbsp;|&nbsp; <a href="https://zinn.ai" style="color:#81A2B2;text-decoration:none;">zinn.ai</a></p>',
+    '        <p style="font-family:' + FONT + ';font-size:11px;color:#81A2B2;margin:0;text-align:center;">1022 park street #407, jacksonville, FL 32204 &nbsp;|&nbsp; <a href="https://zinn.ai" style="color:#81A2B2;text-decoration:none;">zinn.ai</a></div>',
     '      </td></tr>',
     '    </table>',
     '  </td></tr>',
@@ -197,7 +197,7 @@ function buildDocumentEmail(contentHtml, opts = {}) {
  */
 function buildSignNotificationEmail(opts) {
   const body = opts.body || 'Thank you for signing your document with ZINN. A copy is attached to this email for your records.';
-  const contentHtml = '<p style="font-family:' + FONT + ';font-size:13px;color:#4e5757;line-height:1.8;">' + body + '</p>';
+  const contentHtml = '<p style="font-family:' + FONT + ';font-size:13px;color:#4e5757;line-height:1.8;">' + body + '</div>';
   return buildDocumentEmail(contentHtml, { recipientName: opts.recipientName });
 }
 
@@ -355,10 +355,10 @@ async function notifyOnFailure(opts) {
     : opts.cardName || '';
 
   const contentHtml = [
-    '<p><strong>' + opts.service + '</strong> encountered an error.</p>',
-    cardLink ? '<p>Card: ' + cardLink + '</p>' : '',
-    '<p>Error: ' + (opts.error || '').replace(/\n/g, '<br>') + '</p>',
-    '<p style="color:#999;font-size:11px;">This notification was auto-generated.</p>',
+    '<p><strong>' + opts.service + '</strong> encountered an error.</div>',
+    cardLink ? '<p>Card: ' + cardLink + '</div>' : '',
+    '<p>Error: ' + (opts.error || '').replace(/\n/g, '<br>') + '</div>',
+    '<p style="color:#999;font-size:11px;">This notification was auto-generated.</div>',
   ].filter(Boolean).join('\n');
 
   const htmlBody = buildEmailBody(contentHtml);
