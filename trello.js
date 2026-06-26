@@ -372,7 +372,7 @@ function extractEmails(sectionText) {
  * @param {string} clientSection - Raw ## Client content
  * @returns {string} Greeting like "Hello Mary and Marc,"
  */
-function buildClientGreeting(clientSection, emails) {
+function buildClientGreeting(clientSection) {
   if (!clientSection) return 'Hello,';
 
   // Collect ALL non-email, non-phone lines (multiple clients on separate lines)
@@ -426,35 +426,6 @@ function buildClientGreeting(clientSection, emails) {
   const firstNames = expanded.map(function(l) {
     return l.trim().split(' ')[0];
   }).filter(Boolean);
-
-  // If there are more client emails than extracted name lines, try to extract
-  // additional first names from the email local parts
-  if (firstNames.length > 0 && emails && Array.isArray(emails)) {
-    const uniqueEmails = emails.filter(function(e, i, a) { return a.indexOf(e) === i; });
-    if (uniqueEmails.length > firstNames.length) {
-      for (var ei = 0; ei < uniqueEmails.length; ei++) {
-        var localPart = uniqueEmails[ei].split('@')[0].toLowerCase();
-        // Try splitting on . - _ separators
-        var parts = localPart.split(/[._-]/);
-        for (var pi = 0; pi < parts.length; pi++) {
-          var candidate = parts[pi].charAt(0).toUpperCase() + parts[pi].slice(1);
-          if (femaleNames.indexOf(candidate) >= 0 && firstNames.indexOf(candidate) < 0 && candidate !== firstNames[0]) {
-            firstNames.push(candidate);
-          }
-        }
-        // If still fewer names than emails, try prefix match against femaleNames
-        if (uniqueEmails.length > firstNames.length) {
-          for (var fi = 0; fi < femaleNames.length; fi++) {
-            var fn = femaleNames[fi].toLowerCase();
-            if (localPart.indexOf(fn) === 0 && firstNames.indexOf(femaleNames[fi]) < 0) {
-              firstNames.push(femaleNames[fi]);
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
 
   if (firstNames.length === 0) return 'Hello,';
   if (firstNames.length === 1) return 'Hello ' + firstNames[0] + ',';
