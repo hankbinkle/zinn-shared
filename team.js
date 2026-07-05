@@ -20,7 +20,7 @@ const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 // ─── Known member keys and their display names ────────────────────────────
 
-const MEMBER_KEYS = ['kassia', 'rob', 'hannah', 'robin', 'daniel'];
+const MEMBER_KEYS = ['kassia', 'rob', 'hannah', 'robin', 'daniel', 'abby', 'ryan'];
 
 const MEMBER_NAMES = {
   kassia: 'Kassia Zinn',
@@ -28,6 +28,8 @@ const MEMBER_NAMES = {
   hannah: 'Hannah Jensen',
   robin:  'Robin Tuazon',
   daniel: 'Daniel Paul',
+  abby:   'Abby Labial',
+  ryan:   'Ryan Wills',
 };
 
 // Names as they appear in zinn.ai HTML (simpler — no titles/credentials)
@@ -37,6 +39,8 @@ const SEARCH_NAMES = {
   hannah: 'hannah jensen',
   robin:  'robin tuazon',
   daniel: 'daniel paul',
+  abby:   'abby labial',
+  ryan:   'ryan wills',
 };
 
 const MEMBER_TITLES = {
@@ -45,6 +49,8 @@ const MEMBER_TITLES = {
   hannah: 'Interior Designer I',
   robin:  'Project Architect',
   daniel: 'Architectural Designer',
+  abby:   'Architecture Intern',
+  ryan:   'Business Development Representative',
 };
 
 // Member email addresses (TODO: replace with Directory API lookup)
@@ -54,6 +60,8 @@ const MEMBER_EMAILS = {
   hannah: 'hannah@zinn.ai',
   robin:  'robin@zinn.ai',
   daniel: 'daniel@zinn.ai',
+  abby:   'abby@zinn.ai',
+  ryan:   'ryan@zinn.ai',
 };
 
 // Known photo URLs (Squarespace CDN — stable, embedded in page HTML)
@@ -63,6 +71,8 @@ const PHOTO_URLS = {
   hannah: 'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/c1bef1e4-e4ba-4755-8eb8-c6e6b37a5ea2/hannah.jpg?format=500w',
   robin:  'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/9d7af6f9-97ea-4fc2-905c-651ac576b22d/robin.jpg?format=500w',
   daniel: 'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/67d99d44-fd23-4ace-8c72-b4a259568ffb/daniel-headshot.jpg?format=500w',
+  abby:   'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/147e3a9b-8513-4173-b90a-2ca389e07dc1/abby-black_and_white.png?format=500w',
+  ryan:   'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/f2b42a4a-c13d-4f76-892e-88c63769e34f/ryan_wills.jpg?format=500w',
 };
 
 // ─── HTML Parsing ──────────────────────────────────────────────────────────
@@ -273,22 +283,34 @@ function clearCache() {
 
 /**
  * Build an HTML team bio block suitable for email embedding.
- * Returns an array of HTML strings (one per member) with headshot, name, and title.
- * No bio text — just headshot images and titles per Rob's direction.
+ * Returns an array of HTML strings (one per member) with headshot, name, and
+ * the first sentence of their bio with an ellipsis and "read more" link to
+ * https://www.zinn.ai/meet-the-zinn-team
  * @param {object} [opts]
  * @returns {Promise<string[]>}
  */
 async function buildTeamBioHtmlBlock(opts) {
   const members = await getTeamMembers(opts);
+  const TEAM_PAGE_LINK = 'https://www.zinn.ai/meet-the-zinn-team';
   return members.map(m => {
     const photoImg = m.photoUrl
       ? `<img src="${m.photoUrl}" alt="${m.name}" style="width:100px; height:100px; border-radius:50%; object-fit:cover; margin:0 auto 8px auto; display:block;">`
       : '';
+    // Extract first sentence of bio
+    let bioSnippet = '';
+    if (m.bio) {
+      const firstSentence = m.bio.match(/^.*?[\.!?](?:\s|$)/);
+      const snippet = firstSentence ? firstSentence[0].trim() : '';
+      if (snippet.length > 10) {
+        bioSnippet = snippet + '.. <a href="' + TEAM_PAGE_LINK + '" style="color:#242C39;font-weight:600;text-decoration:underline;">read more</a>';
+      }
+    }
     return `
 <div style="text-align:center; margin-bottom:24px; min-width:130px;">
   ${photoImg}
   <div style="font-weight:600; font-size:14px;">${m.name}</div>
   <div style="font-size:12px; color:#666;">${m.title}</div>
+  ${bioSnippet ? '<div style="font-size:12px; color:#444; margin-top:4px; line-height:1.4;">' + bioSnippet + '</div>' : ''}
 </div>`;
   });
 }
@@ -300,6 +322,17 @@ const TRELLO_ID_TO_EMAIL = {
   '664ca53f40650a918a45270a': 'hannah@zinn.ai',
   '65f1d66e561bf4af7889ccd6': 'robin@zinn.ai',
   '69d146103ea45591803e9703': 'daniel@zinn.ai',
+  '6a270609bb018f2cc508171b': 'abby@zinn.ai',
+};
+
+// Trello member ID → display name
+const TRELLO_ID_TO_NAME = {
+  '5f84a8b7d1746581a597e28f': 'Rob Zinn',
+  '5f84c9afd2273e1d31fceb93': 'Kassia Zinn',
+  '664ca53f40650a918a45270a': 'Hannah Jensen',
+  '65f1d66e561bf4af7889ccd6': 'Robin Tuazon',
+  '69d146103ea45591803e9703': 'Daniel Paul',
+  '6a270609bb018f2cc508171b': 'Abby Labial',
 };
 
 /**
@@ -311,12 +344,22 @@ function getEmailByTrelloId(trelloMemberId) {
   return TRELLO_ID_TO_EMAIL[trelloMemberId] || null;
 }
 
+/**
+ * Get display name for a Trello member ID.
+ * @param {string} trelloMemberId
+ * @returns {string|null}
+ */
+function getNameByTrelloId(trelloMemberId) {
+  return TRELLO_ID_TO_NAME[trelloMemberId] || null;
+}
+
 module.exports = {
   getTeamMembers,
   getTeamMember,
   clearCache,
   buildTeamBioHtmlBlock,
   getEmailByTrelloId,
+  getNameByTrelloId,
 };
 
 module.exports.VERSION = '1.0.0';

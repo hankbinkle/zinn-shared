@@ -1,0 +1,36 @@
+{
+  "organization": {
+    "name": "ZINN Architecture + Interiors",
+    "short_name": "ZINN",
+    "domain": "zinn.ai",
+    "principal_name": "Rob Zinn",
+    "principal_email": "rob@zinn.ai",
+    "principal_title": "AIA",
+    "principal_phone": "904.257.6117",
+    "address": {
+      "street": "1022 Park Street, Suite 407",
+      "city": "Jacksonville",
+      "state": "FL",
+      "zip": "32204"
+    }
+  },
+  "email_guide": {
+    "heading": "Forward this email to the client",
+    "image_url": "https://entry-actions-production.up.railway.app/images/guide_edit_subject.png",
+    "instructions": [
+      "click **Forward** and paste in these email addresses...\n\n{email_recipients}",
+      "click **the little arrow thingy** then **edit Subject**",
+      "Remove the **Fwd: prefix** from the Subject",
+      "Remove everything above and including the **yellow box**.",
+      "**Review** the email below, making any minor adjustments necessary.",
+      "Send it",
+      "Check off the checkitem on Trello",
+      "**PLEASE REMOVE THIS BOX AND EVERYTHING ABOVE BEFORE SENDING**"
+    ]
+  },
+  "email_defaults": {
+    "signature_name": "Rob Zinn, AIA",
+    "signature_line1": "zinn.ai",
+    "signature_line2": "904.257.6117"
+  }
+}

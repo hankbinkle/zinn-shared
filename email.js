@@ -90,6 +90,11 @@ function buildHeaderLogoTag(logoBuffer) {
     try { logoBuffer = fs.readFileSync(projectAssetPath); } catch { logoBuffer = null; }
   }
   if (!logoBuffer) {
+    // Try canonical skills-level assets path (local dev, all skills)
+    const canonPath = '/Users/robzinn/.openclaw/skills/assets/logo-email.png';
+    try { logoBuffer = fs.readFileSync(canonPath); } catch { logoBuffer = null; }
+  }
+  if (!logoBuffer) {
     // Fall back to Dropbox path (local dev)
     const logoPath = path.join(LOCAL_DROPBOX_ROOT, 'marketing/branding/logos/_logo-email.png');
     try { logoBuffer = fs.readFileSync(logoPath); } catch { logoBuffer = null; }
@@ -236,6 +241,13 @@ function createMessage(opts) {
     return b64.match(/.{1,76}/g).join(CRLF);
   }
 
+  // Auto-load logo buffer if HTML references cid:zinn-logo but no buffer provided
+  // This ensures the CID attachment is always included when the HTML expects it
+  if (!opts.logoBuffer && opts.htmlBody && opts.htmlBody.includes('cid:zinn-logo')) {
+    const autoLogo = buildHeaderLogoTag();
+    if (autoLogo.buffer) opts.logoBuffer = autoLogo.buffer;
+  }
+
   const htmlB64   = chunkBase64(Buffer.from(opts.htmlBody, 'utf8').toString('base64'));
   const logoB64   = opts.logoBuffer ? chunkBase64(opts.logoBuffer.toString('base64')) : null;
 
@@ -364,20 +376,24 @@ async function notifyOnFailure(opts) {
     ? '<a href="https://trello.com/c/' + opts.cardId + '">' + (opts.cardName || opts.cardId) + '</a>'
     : opts.cardName || '';
 
+  // Convert markdown links [text](url) to HTML anchor tags in the error text
+  var errHtml = (opts.error || '').replace(/\n/g, '<br>');
+  errHtml = errHtml.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
   const contentHtml = [
-    '<p><strong>' + opts.service + '</strong> encountered an error.</div>',
-    cardLink ? '<p>Card: ' + cardLink + '</div>' : '',
-    '<p>Error: ' + (opts.error || '').replace(/\n/g, '<br>') + '</div>',
-    '<p style="color:#999;font-size:11px;">This notification was auto-generated.</div>',
+    '<div><p><strong>' + opts.service + '</strong> encountered an error.</p>',
+    cardLink ? '<p>Card: ' + cardLink + '</p>' : '',
+    '<p>' + errHtml + '</p>',
+    '<p style="color:#999;font-size:11px;">This notification was auto-generated.</p></div>',
   ].filter(Boolean).join('\n');
 
   const htmlBody = buildEmailBody(contentHtml);
 
   try {
-    if (opts.send) {
-      await sendEmail({ to: 'rob@zinn.ai', subject: subject, htmlBody: htmlBody });
-    } else {
+    if (opts.draft) {
       await createDraft({ to: 'rob@zinn.ai', subject: subject, htmlBody: htmlBody });
+    } else {
+      await sendEmail({ to: 'rob@zinn.ai', subject: subject, htmlBody: htmlBody });
     }
     return true;
   } catch (e) {

@@ -283,6 +283,17 @@ async function setCheckitemState(cardId, checkItemId, state) {
 }
 
 /**
+ * Update a checkitem's name on a card.
+ * @param {string} cardId
+ * @param {string} checkItemId
+ * @param {string} newName
+ */
+async function updateCheckitem(cardId, checkItemId, newName) {
+  await trelloPut(`/cards/${cardId}/checkItem/${checkItemId}`, { name: newName });
+  console.log(`[shared/trello] Checkitem ${checkItemId} renamed on card ${cardId}: "${newName.substring(0, 50)}"`);
+}
+
+/**
  * Archive a card.
  * @param {string} cardId
  */
@@ -484,6 +495,7 @@ module.exports = {
   addComment,
   addCheckitem,
   setCheckitemState,
+  updateCheckitem,
   archiveCard,
   parseSections,
   getSection,

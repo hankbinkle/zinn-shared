@@ -138,6 +138,24 @@ async function deleteClient(clientId) {
   }
 }
 
+// ─── Update Client ───────────────────────────────────────────────────────────
+
+/**
+ * Update a Harvest client (e.g., toggle is_active).
+ * @param {number|string} clientId
+ * @param {object} data - Fields to update (e.g., { is_active: false })
+ * @returns {Promise<object|null>}
+ */
+async function updateClient(clientId, data) {
+  const res = await harvest('PATCH', `clients/${clientId}`, data);
+  if (!res.data || !res.data.id) {
+    console.error(`[shared/harvest] updateClient #${clientId} failed:`, JSON.stringify(res.data));
+    return null;
+  }
+  console.log(`[shared/harvest] Updated client #${res.data.id}: ${res.data.name} (is_active=${res.data.is_active})`);
+  return res.data;
+}
+
 // ─── Projects ──────────────────────────────────────────────────────────────
 
 /**
@@ -165,6 +183,24 @@ async function createProject(data) {
   }
 
   console.log(`[shared/harvest] Created project #${res.data.id}: ${res.data.name}`);
+  return res.data;
+}
+
+// ─── Update Project ───────────────────────────────────────────────────────────
+
+/**
+ * Update a Harvest project (e.g., toggle is_active).
+ * @param {number|string} projectId
+ * @param {object} data - Fields to update (e.g., { is_active: false })
+ * @returns {Promise<object|null>}
+ */
+async function updateProject(projectId, data) {
+  const res = await harvest('PATCH', `projects/${projectId}`, data);
+  if (!res.data || !res.data.id) {
+    console.error(`[shared/harvest] updateProject #${projectId} failed:`, JSON.stringify(res.data));
+    return null;
+  }
+  console.log(`[shared/harvest] Updated project #${res.data.id}: ${res.data.name} (is_active=${res.data.is_active})`);
   return res.data;
 }
 
@@ -197,16 +233,51 @@ async function findInvoices(projectId) {
   return invoices;
 }
 
+// ─── Projects (single) ─────────────────────────────────────────────────────
+
+/**
+ * Fetch a single Harvest project by ID.
+ * @param {number|string} projectId
+ * @returns {Promise<object|null>}
+ */
+async function getProject(projectId) {
+  const res = await harvest('GET', 'projects/' + projectId);
+  if (!res.data || !res.data.id) {
+    console.error('[shared/harvest] getProject #' + projectId + ' failed:', JSON.stringify(res.data));
+    return null;
+  }
+  return res.data;
+}
+
+// ─── Time Entries ────────────────────────────────────────────────────────────
+
+/**
+ * Fetch time entries for a project, optionally filtered by date range.
+ * @param {number|string} projectId
+ * @param {object} [opts] - { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
+ * @returns {Promise<Array>} Array of time entry objects
+ */
+async function getTimeEntries(projectId, opts) {
+  var filters = { project_id: projectId };
+  if (opts && opts.from) filters.from = opts.from;
+  if (opts && opts.to) filters.to = opts.to;
+  return await fetchAll('time_entries', filters);
+}
+
 module.exports = {
   harvest,
   fetchAll,
   findClient,
   createClient,
+  updateClient,
   deleteClient,
   findProject,
   createProject,
+  updateProject,
   createInvoice,
   findInvoices,
+  getProject,
+  getTimeEntries,
 };
 
 module.exports.VERSION = '1.0.0';

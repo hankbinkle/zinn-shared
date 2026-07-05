@@ -174,8 +174,35 @@ async function isTaskChainPopulated(cardId) {
   return existing.size > 0;
 }
 
-async function setCheckitemState(cardId, checkItemId, state) {
+// Track auto-checked shortLinks so ACB handlers can skip them.
+// Keyed by cardId -> Set<shortLink>. Exported for use by entry_actions_server.js.
+var autoCheckedShortLinks = new Map();
+
+async function setCheckitemState(cardId, checkItemId, state, shortLink) {
+  if (state === 'complete' && shortLink) {
+    if (!autoCheckedShortLinks.has(cardId)) autoCheckedShortLinks.set(cardId, new Set());
+    autoCheckedShortLinks.get(cardId).add(shortLink);
+  }
   await trello.trelloPut('/cards/' + cardId + '/checkItem/' + checkItemId, { state: state });
+}
+
+/**
+ * Get all ZPT-format checkitems on a card, ordered by Trello position.
+ */
+async function getCardZptItemsInOrder(cardId) {
+  var items = [];
+  try {
+    var cls = await trello.getChecklists(cardId);
+    for (var i = 0; i < cls.length; i++) {
+      var checkItems = cls[i].checkItems || [];
+      for (var j = 0; j < checkItems.length; j++) {
+        var sl = extractShortLinkFromCheckitem(checkItems[j].name);
+        if (sl) items.push({ shortLink: sl, state: checkItems[j].state, pos: checkItems[j].pos, id: checkItems[j].id });
+      }
+    }
+  } catch (_) {}
+  items.sort(function(a, b) { return a.pos - b.pos; });
+  return items;
 }
 
 async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
@@ -200,7 +227,7 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
   if (cardData.length > 0) {
     checklistId = cardData[0].id;
   } else {
-    var newCl = await trello.trelloPost('/cards/' + card.id + '/checklists', { name: 'ZPT tasks' });
+    var newCl = await trello.trelloPost('/cards/' + card.id + '/checklists', { name: 'Checklist' });
     checklistId = newCl.id;
   }
 
@@ -232,18 +259,28 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
     added++;
   }
 
+  console.log('[task-chain] Subphase range: start=' + currentSubphaseStart + ' end=' + currentSubphaseEnd + ' total=' + total);
   if (currentSubphaseStart >= 0) {
     for (var i = 0; i < total; i++) {
-      if (i >= currentSubphaseStart && i <= currentSubphaseEnd) continue;
+      if (i >= currentSubphaseStart && i <= currentSubphaseEnd) {
+        console.log('[task-chain]  SKIP entry subphase item ' + i + ': ' + (taskChain[i] ? taskChain[i].zptCard.name.substring(0,40) : '?'));
+        continue;
+      }
       if (addedItems[i] && addedItems[i].checkItemId) {
-        await setCheckitemState(card.id, addedItems[i].checkItemId, 'complete');
+        console.log('[task-chain]  CHECK item ' + i + ': ' + (taskChain[i] ? taskChain[i].zptCard.name.substring(0,40) : '?'));
+        var shortLink = taskChain[i] ? taskChain[i].zptCard.shortLink : null;
+        await setCheckitemState(card.id, addedItems[i].checkItemId, 'complete', shortLink);
+      } else {
+        console.log('[task-chain]  SKIP item ' + i + ' (null/duplicate): ' + (taskChain[i] ? taskChain[i].zptCard.name.substring(0,40) : '?'));
       }
     }
+  } else {
+    console.log('[task-chain] No entry subphase range, leaving all items unchecked');
   }
 
   // Note: Task Chain metadata section removed -- checkitem-based tracking is the source of truth
 
-  await trello.addComment(card.id, 'ZPT tasks added: ' + added + ' items.');
+  await trello.addComment(card.id, 'Checklist updated: ' + added + ' items.');
   console.log('[task-chain] Populated ' + added + ' items for "' + card.name + '"');
   return { added: added, total: total };
 }
@@ -261,5 +298,7 @@ module.exports = {
   extractShortLinkFromCheckitem,
   getExistingZptCardIds,
   isTaskChainPopulated,
+  getCardZptItemsInOrder,
   populateEntireTaskChain,
+  autoCheckedShortLinks,
 };
