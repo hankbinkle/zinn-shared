@@ -1,6 +1,6 @@
 // =============================================================================
 // team.js — ZINN Team Bio Retrieval Module
-// Dynamically fetches team member bios from zinn.ai/meet-the-zinn-team.
+// Auto-discovers team members from zinn.ai/meet-the-zinn-team.
 // Falls back to static JSON data if the website is unreachable.
 // =============================================================================
 'use strict';
@@ -18,32 +18,17 @@ let cachedTeam = null;
 let lastFetchTime = 0;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-// ─── Known member keys and their display names ────────────────────────────
+// ─── Manual overrides (auto-discovery is primary) ─────────────────────────
+// These override what would be inferred from the website. Add entries as
+// needed, keyed by lowercase first name.
 
-const MEMBER_KEYS = ['kassia', 'rob', 'hannah', 'robin', 'daniel', 'abby', 'ryan'];
-
-const MEMBER_NAMES = {
-  kassia: 'Kassia Zinn',
-  rob:    'Rob Zinn, AIA',
-  hannah: 'Hannah Jensen',
-  robin:  'Robin Tuazon',
-  daniel: 'Daniel Paul',
-  abby:   'Abby Labial',
-  ryan:   'Ryan Wills',
+// Display names that differ from the page's raw <strong> text
+const DISPLAY_NAME_OVERRIDES = {
+  rob: 'Rob Zinn, AIA',
 };
 
-// Names as they appear in zinn.ai HTML (simpler — no titles/credentials)
-const SEARCH_NAMES = {
-  kassia: 'kassia zinn',
-  rob:    'rob zinn',
-  hannah: 'hannah jensen',
-  robin:  'robin tuazon',
-  daniel: 'daniel paul',
-  abby:   'abby labial',
-  ryan:   'ryan wills',
-};
-
-const MEMBER_TITLES = {
+// Professional titles (not explicitly structured on the website page)
+const TITLE_OVERRIDES = {
   kassia: 'President, Principal Design Lead',
   rob:    'Vice President, Principal in Charge',
   hannah: 'Interior Designer I',
@@ -53,19 +38,11 @@ const MEMBER_TITLES = {
   ryan:   'Business Development Representative',
 };
 
-// Member email addresses (TODO: replace with Directory API lookup)
-const MEMBER_EMAILS = {
-  kassia: 'kassia@zinn.ai',
-  rob:    'rob@zinn.ai',
-  hannah: 'hannah@zinn.ai',
-  robin:  'robin@zinn.ai',
-  daniel: 'daniel@zinn.ai',
-  abby:   'abby@zinn.ai',
-  ryan:   'ryan@zinn.ai',
-};
+// Email overrides (fallback is firstname@zinn.ai)
+const EMAIL_OVERRIDES = {};
 
-// Known photo URLs (Squarespace CDN — stable, embedded in page HTML)
-const PHOTO_URLS = {
+// Photo URL fallbacks (used when auto-extraction from page HTML fails)
+const PHOTO_URL_FALLBACKS = {
   kassia: 'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/1cb7ba90-7db7-4844-8173-a6e5516a86ee/kassia-headshot-02.jpg?format=500w',
   rob:    'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/c7c391cf-f64e-404d-825e-36ef0d68dbfe/_rob_glasses_sm.jpg?format=500w',
   hannah: 'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/c1bef1e4-e4ba-4755-8eb8-c6e6b37a5ea2/hannah.jpg?format=500w',
@@ -75,56 +52,15 @@ const PHOTO_URLS = {
   ryan:   'https://images.squarespace-cdn.com/content/v1/5e67c2d2cd094e004e07ff41/f2b42a4a-c13d-4f76-892e-88c63769e34f/ryan_wills.jpg?format=500w',
 };
 
-// ─── HTML Parsing ──────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
 /**
- * Extract bio text for a team member from the zinn.ai page HTML.
- * @param {string} html - Full page HTML
- * @param {string} name - Name to search for (e.g. "kassia zinn")
- * @returns {string|null} Bio text or null
+ * Capitalize first letter of each word.
  */
-function extractBio(html, name) {
-  // Each team member lives in its own <div class="sqs-html-content">.
-  // Find the div that contains this member's <strong>name</strong>,
-  // then extract <p class="sqsrte-large"> paragraphs from within that div only.
-  const divPattern = /<div[^>]*class="[^"]*sqs-html-content[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-  let divMatch;
-  while ((divMatch = divPattern.exec(html)) !== null) {
-    const block = divMatch[1];
-    // Check if this block contains the name
-    const nameInBlock = new RegExp(
-      `<strong>\\s*${escapeRegex(name)}\\s*</strong>`,
-      'i'
-    );
-    if (!nameInBlock.test(block)) continue;
-
-    // Extract all sqsrte-large paragraphs within this div
-    const paraPattern = /<p[^>]*class="[^"]*sqsrte-large[^"]*"[^>]*>(.*?)<\/p>/gi;
-    const paragraphs = [];
-    let paraMatch;
-    while ((paraMatch = paraPattern.exec(block)) !== null) {
-      let text = paraMatch[1]
-        .replace(/<[^>]+>/g, '')       // strip HTML tags
-        .replace(/&nbsp;/g, ' ')       // decode &nbsp;
-        .replace(/&amp;/g, '&')        // decode &amp;
-        .replace(/&lt;/g, '<')         // decode &lt;
-        .replace(/&gt;/g, '>')         // decode &gt;
-        .replace(/&[a-z]+;/g, ' ')     // strip other entities
-        .replace(/\s+/g, ' ')          // collapse whitespace
-        .trim();
-
-      // Strip the name itself if it appears in this paragraph (e.g. Hannah's inline layout)
-      text = text.replace(new RegExp(escapeRegex(name), 'gi'), '').trim();
-
-      if (text.length > 20) {
-        paragraphs.push(text);
-      }
-    }
-
-    return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
-  }
-
-  return null;
+function toTitleCase(str) {
+  return str.replace(/\w\S*/g, function(t) {
+    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+  });
 }
 
 /**
@@ -134,14 +70,70 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Derive a stable unique key from a team member's full name.
+ * Uses the lowercase first-name portion.
+ * @param {string} fullName - e.g. "Abby Labial"
+ * @returns {string} e.g. "abby"
+ */
+function nameToKey(fullName) {
+  return fullName.toLowerCase().split(/\s+/)[0];
+}
 
+// ─── HTML Parsing ──────────────────────────────────────────────────────────
+
+/**
+ * Extract bio paragraphs from an sqs-html-content block.
+ * Finds all <p class="sqsrte-large"> paragraphs except the first one
+ * (which is the name header), strips HTML tags, and returns joined text.
+ * @param {string} block - Inner HTML of an sqs-html-content div
+ * @param {string} nameToStrip - Name text to strip from paragraphs
+ * @returns {string|null}
+ */
+function extractBioFromBlock(block, nameToStrip) {
+  const paraPattern = /<p[^>]*class="[^"]*sqsrte-large[^"]*"[^>]*>(.*?)<\/p>/gi;
+  const paragraphs = [];
+  let paraMatch;
+  let isFirst = true;
+  while ((paraMatch = paraPattern.exec(block)) !== null) {
+    // Skip the first sqsrte-large block (it's the <strong>name</strong> header)
+    if (isFirst) {
+      isFirst = false;
+      continue;
+    }
+
+    let text = paraMatch[1]
+      .replace(/<[^>]+>/g, '')       // strip HTML tags
+      .replace(/&nbsp;/g, ' ')       // decode &nbsp;
+      .replace(/&amp;/g, '&')        // decode &amp;
+      .replace(/&lt;/g, '<')         // decode &lt;
+      .replace(/&gt;/g, '>')         // decode &gt;
+      .replace(/&[a-z]+;/g, ' ')     // strip other entities
+      .replace(/\s+/g, ' ')          // collapse whitespace
+      .trim();
+
+    // Strip name remnants from paragraph text
+    if (nameToStrip) {
+      text = text.replace(new RegExp(escapeRegex(nameToStrip), 'gi'), '').trim();
+    }
+
+    if (text.length > 20) {
+      paragraphs.push(text);
+    }
+  }
+
+  return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
+}
 
 /**
  * Extract photo URL for a team member from the page HTML.
- * Photos are in <img data-src="..." > tags that appear before the name.
+ * Looks for the last <img data-src="..."> before the <strong>name</strong>.
+ * @param {string} html - Full page HTML
+ * @param {string} nameName - Lowercase name string from <strong> tag
+ * @returns {string|null}
  */
-function extractPhotoUrl(html, name) {
-  const nameIdx = html.toLowerCase().indexOf(`<strong>${name.toLowerCase()}`);
+function extractPhotoUrl(html, nameName) {
+  const nameIdx = html.toLowerCase().indexOf('<strong>' + nameName.toLowerCase() + '</strong>');
   if (nameIdx < 0) return null;
 
   const before = html.slice(0, nameIdx);
@@ -150,7 +142,7 @@ function extractPhotoUrl(html, name) {
   if (srcMatch) {
     const url = srcMatch[1];
     // Add format param if not present
-    return url.includes('?') ? url : `${url}?format=500w`;
+    return url.includes('?') ? url : url + '?format=500w';
   }
   return null;
 }
@@ -158,7 +150,9 @@ function extractPhotoUrl(html, name) {
 // ─── Main Fetch ────────────────────────────────────────────────────────────
 
 /**
- * Fetch team member data from zinn.ai.
+ * Fetch and auto-discover all team members from zinn.ai/meet-the-zinn-team.
+ * Scans HTML for every <strong>name</strong> in an sqs-html-content div,
+ * then extracts bio, photo, and applies overrides.
  * @returns {Promise<Array>} Array of { key, name, title, bio, photoUrl }
  */
 async function fetchFromWebsite() {
@@ -171,27 +165,57 @@ async function fetchFromWebsite() {
   });
 
   if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} fetching team page`);
+    throw new Error('HTTP ' + resp.status + ' fetching team page');
   }
 
   const html = await resp.text();
-  const members = [];
 
-  for (const key of MEMBER_KEYS) {
-    const searchName = SEARCH_NAMES[key];
-    const bio = extractBio(html, searchName);
-    // Use known photo URLs (page extraction unreliable due to Squarespace gallery layout)
-    const photoUrl = PHOTO_URLS[key];
+  // Scan all sqs-html-content divs for team member name headers
+  const divPattern = /<div[^>]*class="[^"]*sqs-html-content[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  const members = [];
+  let divMatch;
+
+  while ((divMatch = divPattern.exec(html)) !== null) {
+    const block = divMatch[1];
+
+    // Check if this block starts with a <strong> name (team member header)
+    // The first sqsrte-large paragraph should contain a <strong> with the name
+    const nameMatch = block.match(
+      /<p[^>]*class="[^"]*sqsrte-large[^"]*"[^>]*>\s*<strong>\s*(.+?)\s*<\/strong>/i
+    );
+    if (!nameMatch) continue;
+
+    const rawName = nameMatch[1].trim().toLowerCase(); // e.g. "robin tuazon"
+    const key = nameToKey(rawName);                    // e.g. "robin"
+
+    // Build display name: use override if available, otherwise title-case
+    const displayName = DISPLAY_NAME_OVERRIDES[key] || toTitleCase(rawName);
+
+    // Extract bio from subsequent paragraphs in this block
+    const bio = extractBioFromBlock(block, rawName);
+
+    // Extract photo from page HTML (data-src before the name)
+    const photoUrl = extractPhotoUrl(html, rawName) || PHOTO_URL_FALLBACKS[key] || null;
+
+    // Apply overrides
+    const title = TITLE_OVERRIDES[key] || '';
+    const email = EMAIL_OVERRIDES[key] || (key + '@zinn.ai');
+
     members.push({
-      key,
-      name: MEMBER_NAMES[key],
-      title: MEMBER_TITLES[key],
+      key: key,
+      name: displayName,
+      title: title,
       bio: bio || null,
-      photoUrl,
+      photoUrl: photoUrl,
+      email: email,
     });
   }
 
-  if (members.every(m => !m.bio)) {
+  if (members.length === 0) {
+    throw new Error('No team members found on the team page');
+  }
+
+  if (members.every(function(m) { return !m.bio; })) {
     throw new Error('Failed to extract any bio text from team page');
   }
 
@@ -199,7 +223,7 @@ async function fetchFromWebsite() {
 }
 
 /**
- * Load fallback data from static team.json.
+ * Load fallback data from static team.json or return empty array.
  * @returns {Array}
  */
 function loadFallback() {
@@ -210,17 +234,10 @@ function loadFallback() {
       return data;
     }
   } catch (e) {
-    console.error(`[shared/team] Fallback load failed: ${e.message}`);
+    console.error('[shared/team] Fallback load failed: ' + e.message);
   }
-  // Ultimate fallback: return minimal data
-  console.log('[shared/team] Using hardcoded minimal fallback');
-  return MEMBER_KEYS.map(key => ({
-    key,
-    name: MEMBER_NAMES[key],
-    title: MEMBER_TITLES[key],
-    bio: null,
-    photoUrl: PHOTO_URLS[key],
-  }));
+  console.log('[shared/team] No fallback data available');
+  return [];
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -232,7 +249,8 @@ function loadFallback() {
  * @param {boolean} [opts.forceRefresh] - Skip cache and re-fetch
  * @returns {Promise<Array>}
  */
-async function getTeamMembers(opts = {}) {
+async function getTeamMembers(opts) {
+  opts = opts || {};
   const now = Date.now();
 
   // Return cached data if fresh enough
@@ -248,7 +266,7 @@ async function getTeamMembers(opts = {}) {
     console.log('[shared/team] Fetched fresh team bios from zinn.ai');
     return members;
   } catch (e) {
-    console.error(`[shared/team] Website fetch failed: ${e.message}`);
+    console.error('[shared/team] Website fetch failed: ' + e.message);
   }
 
   // Fall back to cached data even if stale
@@ -270,7 +288,7 @@ async function getTeamMembers(opts = {}) {
  */
 async function getTeamMember(key, opts) {
   const members = await getTeamMembers(opts);
-  return members.find(m => m.key === key) || null;
+  return members.find(function(m) { return m.key === key; }) || null;
 }
 
 /**
@@ -292,26 +310,27 @@ function clearCache() {
 async function buildTeamBioHtmlBlock(opts) {
   const members = await getTeamMembers(opts);
   const TEAM_PAGE_LINK = 'https://www.zinn.ai/meet-the-zinn-team';
-  return members.map(m => {
-    const photoImg = m.photoUrl
-      ? `<img src="${m.photoUrl}" alt="${m.name}" style="width:100px; height:100px; border-radius:50%; object-fit:cover; margin:0 auto 8px auto; display:block;">`
+  return members.map(function(m) {
+    var photoImg = m.photoUrl
+      ? '<img src="' + m.photoUrl + '" alt="' + m.name + '" style="width:100px; height:100px; border-radius:50%; object-fit:cover; margin:0 auto 8px auto; display:block;">'
       : '';
     // Extract first sentence of bio
-    let bioSnippet = '';
+    var bioSnippet = '';
     if (m.bio) {
-      const firstSentence = m.bio.match(/^.*?[\.!?](?:\s|$)/);
-      const snippet = firstSentence ? firstSentence[0].trim() : '';
+      var firstSentence = m.bio.match(/^.*?[\.!?](?:\s|$)/);
+      var snippet = firstSentence ? firstSentence[0].trim() : '';
       if (snippet.length > 10) {
         bioSnippet = snippet + '.. <a href="' + TEAM_PAGE_LINK + '" style="color:#242C39;font-weight:600;text-decoration:underline;">read more</a>';
       }
     }
-    return `
-<div style="text-align:center; margin-bottom:24px; min-width:130px;">
-  ${photoImg}
-  <div style="font-weight:600; font-size:14px;">${m.name}</div>
-  <div style="font-size:12px; color:#666;">${m.title}</div>
-  ${bioSnippet ? '<div style="font-size:12px; color:#444; margin-top:4px; line-height:1.4;">' + bioSnippet + '</div>' : ''}
-</div>`;
+    return [
+      '<div style="text-align:center; margin-bottom:24px; min-width:130px;">',
+      '  ' + photoImg,
+      '  <div style="font-weight:600; font-size:14px;">' + m.name + '</div>',
+      '  <div style="font-size:12px; color:#666;">' + (m.title || '') + '</div>',
+      bioSnippet ? '  <div style="font-size:12px; color:#444; margin-top:4px; line-height:1.4;">' + bioSnippet + '</div>' : '',
+      '</div>'
+    ].join('\n');
   });
 }
 
@@ -354,12 +373,12 @@ function getNameByTrelloId(trelloMemberId) {
 }
 
 module.exports = {
-  getTeamMembers,
-  getTeamMember,
-  clearCache,
-  buildTeamBioHtmlBlock,
-  getEmailByTrelloId,
-  getNameByTrelloId,
+  getTeamMembers: getTeamMembers,
+  getTeamMember: getTeamMember,
+  clearCache: clearCache,
+  buildTeamBioHtmlBlock: buildTeamBioHtmlBlock,
+  getEmailByTrelloId: getEmailByTrelloId,
+  getNameByTrelloId: getNameByTrelloId,
 };
 
 module.exports.VERSION = '1.0.0';
