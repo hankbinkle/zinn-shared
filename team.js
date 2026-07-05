@@ -83,9 +83,11 @@ function nameToKey(fullName) {
 // ─── HTML Parsing ──────────────────────────────────────────────────────────
 
 /**
- * Extract bio paragraphs from an sqs-html-content block.
- * Finds all <p class="sqsrte-large"> paragraphs except the first one
- * (which is the name header), strips HTML tags, and returns joined text.
+ * Extract bio text from an sqs-html-content block.
+ * Handles two layouts:
+ *   1. Name in first <p class="sqsrte-large">, bio in subsequent paragraphs.
+ *   2. Name and bio together in one <p class="sqsrte-large"> (Hannah layout).
+ * Strips HTML tags and returns joined text.
  * @param {string} block - Inner HTML of an sqs-html-content div
  * @param {string} nameToStrip - Name text to strip from paragraphs
  * @returns {string|null}
@@ -96,56 +98,61 @@ function extractBioFromBlock(block, nameToStrip) {
   let paraMatch;
   let isFirst = true;
   while ((paraMatch = paraPattern.exec(block)) !== null) {
-    // Skip the first sqsrte-large block (it's the <strong>name</strong> header)
-    if (isFirst) {
-      isFirst = false;
-      continue;
-    }
+    var raw = paraMatch[1];
 
-    let text = paraMatch[1]
-      .replace(/<[^>]+>/g, '')       // strip HTML tags
-      .replace(/&nbsp;/g, ' ')       // decode &nbsp;
-      .replace(/&amp;/g, '&')        // decode &amp;
-      .replace(/&lt;/g, '<')         // decode &lt;
-      .replace(/&gt;/g, '>')         // decode &gt;
-      .replace(/&[a-z]+;/g, ' ')     // strip other entities
-      .replace(/\s+/g, ' ')          // collapse whitespace
+    // Clean HTML tags and entities from raw paragraph
+    var clean = raw
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&[a-z]+;/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
 
-    // Strip name remnants from paragraph text
+    // Strip name remnants
     if (nameToStrip) {
-      text = text.replace(new RegExp(escapeRegex(nameToStrip), 'gi'), '').trim();
+      clean = clean.replace(new RegExp(escapeRegex(nameToStrip), 'gi'), '').trim();
     }
 
-    if (text.length > 20) {
-      paragraphs.push(text);
+    if (isFirst) {
+      // First paragraph: remove the <strong>name</strong> portion from the RAW HTML,
+      // then see if anything substantial remains (Hannah layout: name + bio in one <p>)
+      var afterName = raw.replace(/<strong>.*?<\/strong>/i, '').trim();
+      var afterNameClean = afterName
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, ' ')
+        .replace(/^[\s,;.]+/, '')
+        .trim();
+
+      isFirst = false;
+
+      // If the remaining content after the name has meaningful bio text, use it
+      if (afterNameClean.length > 20) {
+        if (nameToStrip) {
+          afterNameClean = afterNameClean.replace(new RegExp(escapeRegex(nameToStrip), 'gi'), '').trim();
+        }
+        paragraphs.push(afterNameClean);
+      }
+      // Also add the full cleaned version if different (catches inline content)
+      else if (clean.length > 20) {
+        paragraphs.push(clean);
+      }
+    } else {
+      // Subsequent paragraphs are pure bio text
+      if (clean.length > 20) {
+        paragraphs.push(clean);
+      }
     }
   }
 
   return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
 }
 
-/**
- * Extract photo URL for a team member from the page HTML.
- * Looks for the last <img data-src="..."> before the <strong>name</strong>.
- * @param {string} html - Full page HTML
- * @param {string} nameName - Lowercase name string from <strong> tag
- * @returns {string|null}
- */
-function extractPhotoUrl(html, nameName) {
-  const nameIdx = html.toLowerCase().indexOf('<strong>' + nameName.toLowerCase() + '</strong>');
-  if (nameIdx < 0) return null;
 
-  const before = html.slice(0, nameIdx);
-  // Find the last data-src attribute before the name
-  const srcMatch = before.match(/data-src="([^"]+)"(?:[^>]*>)?$/m);
-  if (srcMatch) {
-    const url = srcMatch[1];
-    // Add format param if not present
-    return url.includes('?') ? url : url + '?format=500w';
-  }
-  return null;
-}
 
 // ─── Main Fetch ────────────────────────────────────────────────────────────
 
@@ -178,28 +185,39 @@ async function fetchFromWebsite() {
   while ((divMatch = divPattern.exec(html)) !== null) {
     const block = divMatch[1];
 
-    // Check if this block starts with a <strong> name (team member header)
-    // The first sqsrte-large paragraph should contain a <strong> with the name
+    // Check if this block contains a team member name header.
+    // Must be a <strong> name NOT wrapped in an <a> tag (filters out
+    // service categories like "Commercial Architecture", "Pre-Sale Services").
     const nameMatch = block.match(
-      /<p[^>]*class="[^"]*sqsrte-large[^"]*"[^>]*>\s*<strong>\s*(.+?)\s*<\/strong>/i
+      /(?:^|[^a-zA-Z])<strong>\s*(.+?)\s*<\/strong>/i
     );
     if (!nameMatch) continue;
 
-    const rawName = nameMatch[1].trim().toLowerCase(); // e.g. "robin tuazon"
-    const key = nameToKey(rawName);                    // e.g. "robin"
+    // Verify the <strong> is NOT inside an <a> tag (service categories are linked)
+    var nameHtml = nameMatch[0];
+    if (/<a\s/.test(nameHtml)) continue;
+
+    var rawName = nameMatch[1].trim().toLowerCase();
+    // Reject names that don't look like actual people (e.g. "Commercial Architecture",
+    // "Pre-Sale Services", or single words that aren't first+last)
+    if (!rawName.includes(' ')) continue;
+    // Reject names containing service/category keywords
+    if (/\b(architecture|services|commercial|residential)\b/i.test(rawName)) continue;
+
+    var key = nameToKey(rawName);
 
     // Build display name: use override if available, otherwise title-case
-    const displayName = DISPLAY_NAME_OVERRIDES[key] || toTitleCase(rawName);
+    var displayName = DISPLAY_NAME_OVERRIDES[key] || toTitleCase(rawName);
 
-    // Extract bio from subsequent paragraphs in this block
-    const bio = extractBioFromBlock(block, rawName);
+    // Extract bio from paragraph text in this block
+    var bio = extractBioFromBlock(block, rawName);
 
-    // Extract photo from page HTML (data-src before the name)
-    const photoUrl = extractPhotoUrl(html, rawName) || PHOTO_URL_FALLBACKS[key] || null;
+    // Use known photo URLs (Squarespace layout makes auto-extraction unreliable)
+    var photoUrl = PHOTO_URL_FALLBACKS[key] || null;
 
     // Apply overrides
-    const title = TITLE_OVERRIDES[key] || '';
-    const email = EMAIL_OVERRIDES[key] || (key + '@zinn.ai');
+    var title = TITLE_OVERRIDES[key] || '';
+    var email = EMAIL_OVERRIDES[key] || (key + '@zinn.ai');
 
     members.push({
       key: key,

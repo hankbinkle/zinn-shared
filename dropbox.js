@@ -421,7 +421,10 @@ async function moveFolder(sourcePath, destPath) {
  */
 async function listFolder(dirPath) {
   const token = await getAccessToken();
-  if (!token) return [];
+  if (!token) {
+    console.error('[shared/dropbox] listFolder("' + dirPath + '"): no token available, returning []');
+    return [];
+  }
 
   const memberId = await getTeamMemberId(token);
   const rootNs = memberId ? await getTeamRootNamespace(token, memberId) : null;
