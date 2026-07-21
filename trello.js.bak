@@ -37,10 +37,6 @@ function trelloGet(path) {
         }
       });
     });
-    req.setTimeout(30000, () => {
-      req.destroy();
-      reject(new Error(`Trello GET ${path} timed out after 30s`));
-    });
     req.on('error', (e) => reject(new Error(`Trello GET ${path} request failed: ${e.message}`)));
     req.end();
   });
@@ -65,15 +61,6 @@ async function trelloPut(path, body) {
     body: new URLSearchParams(body),
   });
   if (!res.ok) throw new Error(`Trello PUT ${path} failed: ${res.status}`);
-  return res.json();
-}
-
-async function trelloDel(path) {
-  const url = `${API_BASE}${path}${path.includes('?') ? '&' : '?'}key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`;
-  const res = await fetch(url, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error(`Trello DELETE ${path} failed: ${res.status}`);
   return res.json();
 }
 
@@ -310,17 +297,6 @@ async function updateCheckitem(cardId, checkItemId, newName) {
  * Archive a card.
  * @param {string} cardId
  */
-/**
- * Delete a checkitem from a card's checklist.
- * @param {string} cardId - Card ID
- * @param {string} checkItemId - Checkitem ID
- */
-async function deleteCheckitem(cardId, checkItemId) {
-  var cls = await trelloGet('/cards/' + cardId + '/checklists');
-  if (cls.length === 0) throw new Error('No checklists on card ' + cardId);
-  return trelloDel('/cards/' + cardId + '/checkItem/' + checkItemId);
-}
-
 async function archiveCard(cardId) {
   await trelloPut(`/cards/${cardId}`, { closed: true });
   console.log(`[shared/trello] Card ${cardId} archived`);
@@ -520,7 +496,6 @@ module.exports = {
   addCheckitem,
   setCheckitemState,
   updateCheckitem,
-  deleteCheckitem,
   archiveCard,
   parseSections,
   getSection,

@@ -58,6 +58,21 @@ if [ -f "$SHARED_DIR/team.json" ]; then
   cp "$SHARED_DIR/team.json" "$TARGET_DIR/_shared/team.json"
 fi
 
+# --- Sync Python pipeline scripts for project_template_manager ---
+if [ "$SKILL_NAME" = "project_automator" ]; then
+  echo ""
+  echo "=== Syncing pipeline scripts (_scripts/) ==="
+  PY_SCRIPTS='process_project.py generate_keynote_table.py'
+  for script in $PY_SCRIPTS; do
+    src="$SHARED_DIR/../$SKILL_NAME/_scripts/$script"
+    if [ -f "$src" ]; then
+      echo "  $script (already present)"
+    else
+      echo "  $script (not found at $src)"
+    fi
+  done
+fi
+
 echo "=== Done. ${COUNT} modules synced to $TARGET_DIR/_shared/ ==="
 echo ""
 echo "NOTE: This is a local copy. For Railway deployment, push to git instead:"
