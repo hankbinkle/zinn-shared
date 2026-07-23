@@ -402,6 +402,39 @@ async function notifyOnFailure(opts) {
   }
 }
 
+/**
+ * notifySuccess — send a clean success notification (no "Error" in subject/body)
+ *
+ * opts: { cardName, cardId?, summary? }
+ */
+async function notifySuccess(opts) {
+  const projectLabel = opts.cardName || 'Notification';
+  const subject = projectLabel + ' - Account Setup Complete';
+
+  const cardLink = opts.cardId
+    ? '<a href="https://trello.com/c/' + opts.cardId + '">' + (opts.cardName || opts.cardId) + '</a>'
+    : opts.cardName || '';
+
+  var summaryHtml = (opts.summary || 'Complete').replace(/\n/g, '<br>');
+
+  const contentHtml = [
+    '<div><p><strong>Account Setup</strong> completed successfully.</p>',
+    cardLink ? '<p>Card: ' + cardLink + '</p>' : '',
+    '<p>' + summaryHtml + '</p>',
+    '<p style="color:#999;font-size:11px;">This notification was auto-generated.</p></div>',
+  ].filter(Boolean).join('\n');
+
+  const htmlBody = buildEmailBody(contentHtml);
+
+  try {
+    await sendEmail({ to: 'rob@zinn.ai', subject: subject, htmlBody: htmlBody });
+    return true;
+  } catch (e) {
+    console.error('[shared/email] notifySuccess failed: ' + e.message);
+    return false;
+  }
+}
+
 // ─── Google OAuth2 Token (direct HTTPS, Railway-safe) ─────────────────────
 
 let cachedCreds = null;
@@ -560,6 +593,7 @@ module.exports = {
   sendEmail,
   createDraft,
   notifyOnFailure,
+  notifySuccess,
 };
 
-module.exports.VERSION = '1.0.0';
+module.exports.VERSION = '1.0.1';
