@@ -126,6 +126,46 @@ async function getCardsInList(listId) {
   return trelloGet(`/lists/${listId}/cards?customFieldItems=true`);
 }
 
+// ─── Custom Fields ────────────────────────────────────────────────────────────
+
+/**
+ * Get all custom field definitions for a board.
+ * @param {string} boardId
+ * @returns {Promise<Array>}
+ */
+async function getBoardCustomFields(boardId) {
+  return trelloGet(`/boards/${boardId}/customFields`);
+}
+
+/**
+ * Get custom field items for a specific card.
+ * @param {string} cardId - Card ID or shortLink
+ * @returns {Promise<Array>}
+ */
+async function getCardCustomFieldItems(cardId) {
+  return trelloGet(`/cards/${cardId}/customFieldItems`);
+}
+
+/**
+ * Get the value of a specific custom field on a card.
+ * Handles number type (value.number) and text type (value.text).
+ * @param {string} cardId - Card ID or shortLink
+ * @param {string} customFieldDefId - Custom field definition ID
+ * @returns {Promise<string|number|null>} The field value, or null if unset
+ */
+async function getCustomFieldValue(cardId, customFieldDefId) {
+  var items = await getCardCustomFieldItems(cardId);
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].idCustomField === customFieldDefId) {
+      var v = items[i].value;
+      if (v && v.number !== undefined) return parseFloat(v.number);
+      if (v && v.text !== undefined) return v.text;
+      return null;
+    }
+  }
+  return null;
+}
+
 // ─── Lists ────────────────────────────────────────────────────────────────
 
 /**
@@ -506,6 +546,9 @@ module.exports = {
   trelloPut,
   getCard,
   getCardsInList,
+  getBoardCustomFields,
+  getCardCustomFieldItems,
+  getCustomFieldValue,
   getList,
   getListName,
   getBoardLists,

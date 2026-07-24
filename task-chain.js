@@ -5,6 +5,7 @@
 'use strict';
 
 const trello = require('./trello');
+const scheduler = require('./scheduler');
 const ZPT_BOARD_ID = '66f2e19a4dd7012acc370148';
 
 // ─── Phase / List Helpers ─────────────────────────────────────────────────
@@ -205,9 +206,114 @@ async function getCardZptItemsInOrder(cardId) {
   return items;
 }
 
-async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
+// ─── Hours & Scheduling ──────────────────────────────────────────────────────
+
+/**
+ * Fetch the "hours" Trello custom field value for each ZPTB card in the chain.
+ * Returns a map: shortLink -> hours (number). Skips cards with no hours set.
+ */
+async function fetchHoursForChain(taskChain) {
+  var cfs = await trello.getBoardCustomFields(ZPT_BOARD_ID);
+  var hoursDef = null;
+  for (var ci = 0; ci < cfs.length; ci++) {
+    if (cfs[ci].name.toLowerCase() === 'hours') {
+      hoursDef = cfs[ci];
+      break;
+    }
+  }
+  if (!hoursDef) {
+    console.log('[task-chain] No "hours" custom field found on ZPT2 board');
+    return {};
+  }
+
+  var hoursMap = {};
+  for (var i = 0; i < taskChain.length; i++) {
+    var sl = taskChain[i].zptCard.shortLink;
+    try {
+      var val = await trello.getCustomFieldValue(sl, hoursDef.id);
+      if (val !== null && typeof val === 'number' && val > 0) {
+        hoursMap[sl] = val;
+      }
+    } catch (e) {
+      console.log('[task-chain] Failed to fetch hours for ' + sl + ': ' + e.message);
+    }
+    await new Promise(function(r) { setTimeout(r, 50); });
+  }
+  return hoursMap;
+}
+
+/**
+ * Apply scheduling to newly added checkitems: set due dates and update names
+ * with hidden start date markdown for board-visualizer compatibility.
+ */
+async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
+  if (!addedItems || addedItems.length === 0) return;
+
+  var hoursList = [];
+  for (var i = 0; i < addedItems.length; i++) {
+    if (!addedItems[i]) {
+      hoursList.push({ shortLink: null, hours: 0 });
+      continue;
+    }
+    var sl = addedItems[i].item.zptCard.shortLink;
+    var rawHours = hoursMap[sl] || 0;
+    var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt);
+    hoursList.push({ shortLink: sl, hours: adjHours });
+  }
+
+  var schedule = scheduler.calculateSchedule(hoursList, new Date());
+
+  for (var i = 0; i < addedItems.length; i++) {
+    if (!addedItems[i] || !schedule[i]) continue;
+    var s = schedule[i];
+    if (!s.dueISO && !s.startISO) continue;
+
+    var ci = addedItems[i].checkItemId;
+    var zc = addedItems[i].item.zptCard;
+    var baseUrl = zc.shortUrl || 'https://trello.com/c/' + zc.shortLink;
+    var hiddenMd = scheduler.buildStartDateMarkdown(s.startISO);
+    var fullName = '[' + zc.name + '](' + baseUrl + ')' + hiddenMd;
+
+    try {
+      await trello.trelloPut('/cards/' + cardId + '/checkItem/' + ci, { name: fullName });
+    } catch (e) {
+      console.log('[task-chain] Failed to set name for checkitem ' + ci + ': ' + e.message);
+    }
+
+    if (s.dueISO) {
+      try {
+        await trello.trelloPut('/cards/' + cardId + '/checkItem/' + ci, { due: s.dueISO });
+      } catch (e) {
+        console.log('[task-chain] Failed to set due for checkitem ' + ci + ': ' + e.message);
+      }
+    }
+  }
+
+  console.log('[task-chain] Applied schedule to ' + schedule.filter(function(s) { return s.dueISO; }).length + ' checkitems');
+}
+
+// ─── Population ───────────────────────────────────────────────────────────────
+
+async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, leadsMemberId, actorMemberId) {
   var total = taskChain.length;
   var added = 0;
+
+  // --- Fetch hours from ZPTB template cards ---
+  var hoursMap = await fetchHoursForChain(taskChain);
+
+  // --- Parse project area for hours scaling ---
+  var projectSqFt = null;
+  var areaText = trello.getSection(card, 'Area');
+  if (areaText) {
+    projectSqFt = scheduler.parseAreaSqFt(areaText);
+    if (projectSqFt) {
+      console.log('[task-chain] Project sq ft: ' + projectSqFt);
+    } else {
+      console.log('[task-chain] Could not parse area from: "' + areaText.substring(0, 60) + '"');
+    }
+  } else {
+    console.log('[task-chain] No ## Area section on "' + card.name + '"');
+  }
 
   var currentSubphaseStart = -1;
   var currentSubphaseEnd = -1;
@@ -238,6 +344,9 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
     for (var sl of existing) existingShortLinks.add(sl);
   } catch (_) {}
 
+  var hasHours = Object.keys(hoursMap).length > 0;
+  var hasAreaWarning = hasHours && (!projectSqFt);
+
   var addedItems = [];
   for (var i = 0; i < total; i++) {
     var item = taskChain[i];
@@ -251,13 +360,18 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
       continue;
     }
 
-    var newItem = await trello.trelloPost('/checklists/' + checklistId + '/checkItems', {
-      name: itemName
-    });
+    var body = { name: itemName };
+    if (leadsMemberId && item.phaseName === 'leads') body.idMember = leadsMemberId;
+    var newItem = await trello.trelloPost('/checklists/' + checklistId + '/checkItems', body);
     addedItems.push({ item: item, checkItemId: newItem.id });
     existingShortLinks.add(sl);
     added++;
+
+    if (i % 5 === 4) await new Promise(function(r) { setTimeout(r, 100); });
   }
+
+  // --- Apply scheduling ---
+  await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt);
 
   console.log('[task-chain] Subphase range: start=' + currentSubphaseStart + ' end=' + currentSubphaseEnd + ' total=' + total);
   if (currentSubphaseStart >= 0) {
@@ -278,7 +392,17 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName) {
     console.log('[task-chain] No entry subphase range, leaving all items unchecked');
   }
 
-  // Note: Task Chain metadata section removed -- checkitem-based tracking is the source of truth
+  // Send error email if area missing but template cards have hours
+  if (hasAreaWarning) {
+    var err = '## Area section is missing or unparseable on "' + card.name + '". ' +
+      'Template tasks have hours (' + Object.keys(hoursMap).length + ' cards) but scheduling ' +
+      'could not be calculated. Checkitems were added without start/due dates. ' +
+      'Add a square footage value to the ## Area section (e.g., "2000", "2,000 SF").';
+    console.log('[task-chain] ' + err);
+    try {
+      await trello.addComment(card.id, err);
+    } catch (_) {}
+  }
 
   await trello.addComment(card.id, 'Checklist updated: ' + added + ' items.');
   console.log('[task-chain] Populated ' + added + ' items for "' + card.name + '"');
