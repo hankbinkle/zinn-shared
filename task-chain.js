@@ -315,19 +315,6 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     console.log('[task-chain] No ## Area section on "' + card.name + '"');
   }
 
-  var currentSubphaseStart = -1;
-  var currentSubphaseEnd = -1;
-  if (entrySubphaseListName) {
-    for (var i = 0; i < total; i++) {
-      if (taskChain[i].listName === entrySubphaseListName) {
-        if (currentSubphaseStart === -1) currentSubphaseStart = i;
-        currentSubphaseEnd = i;
-      } else if (currentSubphaseEnd >= 0) {
-        break;
-      }
-    }
-  }
-
   var cardData = await trello.getChecklists(card.id);
   var checklistId = null;
   if (cardData.length > 0) {
@@ -373,24 +360,8 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   // --- Apply scheduling ---
   await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt);
 
-  console.log('[task-chain] Subphase range: start=' + currentSubphaseStart + ' end=' + currentSubphaseEnd + ' total=' + total);
-  if (currentSubphaseStart >= 0) {
-    for (var i = 0; i < total; i++) {
-      if (i >= currentSubphaseStart && i <= currentSubphaseEnd) {
-        console.log('[task-chain]  SKIP entry subphase item ' + i + ': ' + (taskChain[i] ? taskChain[i].zptCard.name.substring(0,40) : '?'));
-        continue;
-      }
-      if (addedItems[i] && addedItems[i].checkItemId) {
-        console.log('[task-chain]  CHECK item ' + i + ': ' + (taskChain[i] ? taskChain[i].zptCard.name.substring(0,40) : '?'));
-        var shortLink = taskChain[i] ? taskChain[i].zptCard.shortLink : null;
-        await setCheckitemState(card.id, addedItems[i].checkItemId, 'complete', shortLink);
-      } else {
-        console.log('[task-chain]  SKIP item ' + i + ' (null/duplicate): ' + (taskChain[i] ? taskChain[i].zptCard.name.substring(0,40) : '?'));
-      }
-    }
-  } else {
-    console.log('[task-chain] No entry subphase range, leaving all items unchecked');
-  }
+  // Auto-check block removed 2026-07-24. Humans check items as work is completed.
+  // All newly added items remain unchecked.
 
   // Send error email if area missing but template cards have hours
   if (hasAreaWarning) {
