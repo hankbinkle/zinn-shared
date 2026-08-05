@@ -166,6 +166,45 @@ async function getCustomFieldValue(cardId, customFieldDefId) {
   return null;
 }
 
+/**
+ * Set a text custom field value on a card.
+ * Custom field items require a JSON body (not form-urlencoded), so this uses
+ * its own https PUT rather than trelloPut.
+ * @param {string} cardId - Card ID or shortLink
+ * @param {string} customFieldDefId - Custom field definition ID
+ * @param {string} text - Text value to write (use null to clear)
+ * @returns {Promise<object>} Trello response
+ */
+async function setCustomFieldValue(cardId, customFieldDefId, text) {
+  var urlStr = `${API_BASE}/cards/${cardId}/customField/${customFieldDefId}/item${'?'}key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`;
+  var u = new URL(urlStr);
+  var body = text === null || text === undefined ? { value: {} } : { value: { text: String(text) } };
+  return new Promise(function (resolve, reject) {
+    var payload = JSON.stringify(body);
+    var req = https.request({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, function (res) {
+      var resp = '';
+      res.on('data', function (c) { resp += c; });
+      res.on('end', function () {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`Trello custom field PUT failed: ${res.statusCode} ${resp.slice(0, 200)}`));
+        } else {
+          try { resolve(JSON.parse(resp)); }
+          catch (e) { resolve({ raw: resp }); }
+        }
+      });
+    });
+    req.setTimeout(30000, function () { req.destroy(); reject(new Error('Trello custom field PUT timed out')); });
+    req.on('error', function (e) { reject(new Error('Trello custom field PUT request failed: ' + e.message)); });
+    req.write(payload);
+    req.end();
+  });
+}
+
 // ─── Lists ────────────────────────────────────────────────────────────────
 
 /**
@@ -549,6 +588,7 @@ module.exports = {
   getBoardCustomFields,
   getCardCustomFieldItems,
   getCustomFieldValue,
+  setCustomFieldValue,
   getList,
   getListName,
   getBoardLists,

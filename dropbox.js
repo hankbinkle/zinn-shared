@@ -31,6 +31,7 @@ function dropboxFetch(url, opts) {
         resolve({
           ok: res.statusCode >= 200 && res.statusCode < 300,
           status: res.statusCode,
+          headers: res.headers,
           json: function() { try { return JSON.parse(body); } catch(e) { return null; } },
           text: function() { return body; },
         });
@@ -48,6 +49,42 @@ function dropboxFetch(url, opts) {
 
 const DROPBOX_API = 'https://api.dropboxapi.com';
 const DROPBOX_CONTENT = 'https://content.dropboxapi.com';
+
+/**
+ * Dropbox fetch with retry on rate-limit (429) and transient network errors.
+ * Exponential backoff: 1s, 2s, 4s, 8s (5 attempts total), honors Retry-After.
+ * @param {string} url
+ * @param {object} opts - same options as dropboxFetch
+ * @param {string} label - log label for diagnostics
+ * @returns {Promise<object>} final response object
+ */
+async function fetchWithRetry(url, opts, label) {
+  const maxAttempts = 5;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res;
+    try {
+      res = await dropboxFetch(url, opts);
+    } catch (e) {
+      if (attempt >= maxAttempts) throw e;
+      const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+      console.warn(`[shared/dropbox] ${label} network error (attempt ${attempt}/${maxAttempts}): ${e.message}; retrying in ${backoff}ms`);
+      await sleep(backoff);
+      continue;
+    }
+    if (res.status !== 429 || attempt >= maxAttempts) {
+      return res;
+    }
+    const retryAfter = parseFloat((res.headers || {})['retry-after']);
+    const backoff = (Number.isFinite(retryAfter) && retryAfter > 0)
+      ? retryAfter * 1000
+      : Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+    console.warn(`[shared/dropbox] ${label} rate-limited (429), attempt ${attempt}/${maxAttempts}; retrying in ${backoff}ms`);
+    await sleep(backoff);
+  }
+  // Unreachable, but satisfy the linter
+  return dropboxFetch(url, opts);
+}
 
 // ─── Token Management ─────────────────────────────────────────────────────
 
@@ -358,11 +395,11 @@ async function copyFolder(sourcePath, destPath) {
   const headers = { ...buildHeaders(token, memberId, rootNs), 'Content-Type': 'application/json' };
 
   try {
-    const res = await dropboxFetch(`${DROPBOX_API}/2/files/copy_v2`, {
+    const res = await fetchWithRetry(`${DROPBOX_API}/2/files/copy_v2`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ from_path: sourcePath, to_path: destPath }),
-    });
+    }, 'copyFolder');
 
     if (!res.ok) {
       const text = await res.text();
@@ -393,11 +430,11 @@ async function moveFolder(sourcePath, destPath) {
   const headers = { ...buildHeaders(token, memberId, rootNs), 'Content-Type': 'application/json' };
 
   try {
-    const res = await dropboxFetch(`${DROPBOX_API}/2/files/move_v2`, {
+    const res = await fetchWithRetry(`${DROPBOX_API}/2/files/move_v2`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ from_path: sourcePath, to_path: destPath }),
-    });
+    }, 'moveFolder');
 
     if (!res.ok) {
       const text = await res.text();
@@ -441,11 +478,11 @@ async function listFolder(dirPath) {
         : `${DROPBOX_API}/2/files/list_folder`;
       const body = cursor ? { cursor } : { path: dirPath };
 
-      const res = await dropboxFetch(endpoint, {
+      const res = await fetchWithRetry(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-      });
+      }, 'listFolder');
 
       if (!res.ok) {
         const text = await res.text();
@@ -485,11 +522,11 @@ async function deletePath(dropboxPath) {
   const headers = { ...buildHeaders(token, memberId, rootNs), 'Content-Type': 'application/json' };
 
   try {
-    const res = await dropboxFetch(`${DROPBOX_API}/2/files/delete_v2`, {
+    const res = await fetchWithRetry(`${DROPBOX_API}/2/files/delete_v2`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ path: dropboxPath }),
-    });
+    }, 'deletePath');
 
     if (!res.ok) {
       const text = await res.text();

@@ -231,8 +231,9 @@ async function fetchHoursForChain(taskChain) {
     var sl = taskChain[i].zptCard.shortLink;
     try {
       var val = await trello.getCustomFieldValue(sl, hoursDef.id);
-      if (val !== null && typeof val === 'number' && val > 0) {
-        hoursMap[sl] = val;
+      if (val !== null && val > 0) {
+        var numVal = (typeof val === 'string') ? parseFloat(val) : val;
+        if (numVal > 0) hoursMap[sl] = numVal;
       }
     } catch (e) {
       console.log('[task-chain] Failed to fetch hours for ' + sl + ': ' + e.message);
@@ -306,13 +307,12 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   var areaText = trello.getSection(card, 'Area');
   if (areaText) {
     projectSqFt = scheduler.parseAreaSqFt(areaText);
-    if (projectSqFt) {
-      console.log('[task-chain] Project sq ft: ' + projectSqFt);
-    } else {
-      console.log('[task-chain] Could not parse area from: "' + areaText.substring(0, 60) + '"');
-    }
+  }
+  if (!projectSqFt) {
+    projectSqFt = scheduler.BENCHMARK_SQFT;
+    console.log('[task-chain] No ## Area on "' + card.name + '" — defaulting to ' + projectSqFt + ' sq ft');
   } else {
-    console.log('[task-chain] No ## Area section on "' + card.name + '"');
+    console.log('[task-chain] Project sq ft: ' + projectSqFt);
   }
 
   var cardData = await trello.getChecklists(card.id);
@@ -330,9 +330,6 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     var existing = await getExistingZptCardIds(card.id);
     for (var sl of existing) existingShortLinks.add(sl);
   } catch (_) {}
-
-  var hasHours = Object.keys(hoursMap).length > 0;
-  var hasAreaWarning = hasHours && (!projectSqFt);
 
   var addedItems = [];
   for (var i = 0; i < total; i++) {
@@ -362,18 +359,6 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
 
   // Auto-check block removed 2026-07-24. Humans check items as work is completed.
   // All newly added items remain unchecked.
-
-  // Send error email if area missing but template cards have hours
-  if (hasAreaWarning) {
-    var err = '## Area section is missing or unparseable on "' + card.name + '". ' +
-      'Template tasks have hours (' + Object.keys(hoursMap).length + ' cards) but scheduling ' +
-      'could not be calculated. Checkitems were added without start/due dates. ' +
-      'Add a square footage value to the ## Area section (e.g., "2000", "2,000 SF").';
-    console.log('[task-chain] ' + err);
-    try {
-      await trello.addComment(card.id, err);
-    } catch (_) {}
-  }
 
   await trello.addComment(card.id, 'Checklist updated: ' + added + ' items.');
   console.log('[task-chain] Populated ' + added + ' items for "' + card.name + '"');
