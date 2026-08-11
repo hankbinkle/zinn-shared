@@ -151,7 +151,11 @@ async function getFilteredTaskChain(card, phaseWhitelist) {
 // ─── Checkitem Population ─────────────────────────────────────────────────
 
 function extractShortLinkFromCheckitem(rawName) {
-  var m = rawName.match(/^\[.+?\]\(https?:\/\/trello\.com\/c\/([a-zA-Z0-9]+)\)/);
+  // Accepts bare short links (/c/ABC123), slug-suffixed links
+  // (/c/ABC123/task-title), and query-suffixed links (/c/ABC123?duration_days=1).
+  // Full 24-char card IDs are captured too — the Trello API resolves them the
+  // same as short links. Returns null for non-ZPT checkitems.
+  var m = rawName.match(/^\[.+?\]\(https?:\/\/trello\.com\/c\/([a-zA-Z0-9]+)(?:[\/?#][^)]*)?\)/);
   return m ? m[1] : null;
 }
 
