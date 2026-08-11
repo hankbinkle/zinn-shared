@@ -16,34 +16,50 @@ const API_BASE = 'https://api.trello.com/1';
  * Trello GET using native https module (node-fetch v2 has premature close issues
  * with Trello API on Node 24). Falls back to node-fetch for non-GET operations.
  */
-function trelloGet(path) {
-  return new Promise((resolve, reject) => {
-    const urlStr = `${API_BASE}${path}${path.includes('?') ? '&' : '?'}key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`;
-    const u = new URL(urlStr);
-    const req = https.request({
-      hostname: u.hostname,
-      path: u.pathname + u.search,
-      method: 'GET',
-      headers: { 'Accept-Encoding': 'identity' },
-    }, (res) => {
-      let body = '';
-      res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`Trello GET ${path} failed: ${res.statusCode}`));
-        } else {
-          try { resolve(JSON.parse(body)); }
-          catch (e) { reject(new Error(`Trello GET ${path} JSON parse failed: ${e.message}`)); }
-        }
+function trelloGet(path, retries) {
+  if (retries === undefined) retries = 5;
+  return attemptGet(path, retries, 1);
+}
+
+async function attemptGet(path, retries, attempt) {
+  try {
+    return await new Promise((resolve, reject) => {
+      const urlStr = `${API_BASE}${path}${path.includes('?') ? '&' : '?'}key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`;
+      const u = new URL(urlStr);
+      const req = https.request({
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: { 'Accept-Encoding': 'identity' },
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            reject(new Error(`Trello GET ${path} failed: ${res.statusCode}`));
+          } else {
+            try { resolve(JSON.parse(body)); }
+            catch (e) { reject(new Error(`Trello GET ${path} JSON parse failed: ${e.message}`)); }
+          }
+        });
       });
+      req.setTimeout(30000, () => {
+        req.destroy();
+        reject(new Error(`Trello GET ${path} timed out after 30s`));
+      });
+      req.on('error', (e) => reject(new Error(`Trello GET ${path} request failed: ${e.message}`)));
+      req.end();
     });
-    req.setTimeout(30000, () => {
-      req.destroy();
-      reject(new Error(`Trello GET ${path} timed out after 30s`));
-    });
-    req.on('error', (e) => reject(new Error(`Trello GET ${path} request failed: ${e.message}`)));
-    req.end();
-  });
+  } catch (e) {
+    if (attempt >= retries) throw e;
+    if (e.message && e.message.includes('429')) {
+      const delay = 1000 * Math.pow(2, attempt);
+      console.log(`[ratelimit] GET 429 on ${path.slice(0, 40)}, retry ${attempt} in ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+      return attemptGet(path, retries, attempt + 1);
+    }
+    throw e;
+  }
 }
 
 async function trelloPost(path, body) {
