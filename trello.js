@@ -416,6 +416,18 @@ async function deleteCheckitem(cardId, checkItemId) {
   return trelloDel('/cards/' + cardId + '/checkItem/' + checkItemId);
 }
 
+/**
+ * Move a checkitem to another checklist on the same card.
+ * The checkitem keeps its name, state, and due date (same object, new home).
+ * @param {string} cardId
+ * @param {string} checkItemId
+ * @param {string} targetChecklistId
+ */
+async function moveCheckitem(cardId, checkItemId, targetChecklistId) {
+  await trelloPut(`/cards/${cardId}/checkItem/${checkItemId}`, { idChecklist: targetChecklistId });
+  console.log(`[shared/trello] Checkitem ${checkItemId} moved to checklist ${targetChecklistId}`);
+}
+
 async function archiveCard(cardId) {
   await trelloPut(`/cards/${cardId}`, { closed: true });
   console.log(`[shared/trello] Card ${cardId} archived`);
@@ -620,6 +632,7 @@ module.exports = {
   setCheckitemState,
   updateCheckitem,
   deleteCheckitem,
+  moveCheckitem,
   archiveCard,
   parseSections,
   getSection,

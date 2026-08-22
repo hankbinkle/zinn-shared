@@ -8,6 +8,75 @@ const trello = require('./trello');
 const scheduler = require('./scheduler');
 const ZPT_BOARD_ID = '66f2e19a4dd7012acc370148';
 
+// ─── Checklist Archive ──────────────────────────────────────────────────────
+// The main "Checklist" holds ONLY the current phase's ZPT checkitems.
+// Everything else parks in "Checklist Archive" (dormant, invisible to the
+// engine). Items are matched by the ZPTB card shortLink embedded in the
+// checkitem link — never by title — so renamed template cards never orphan
+// or duplicate items.
+const MAIN_CHECKLIST_NAME = 'Checklist';
+const ARCHIVE_CHECKLIST_NAME = 'Checklist Archive';
+
+function isArchiveChecklistName(name) {
+  return (name || '').trim().toLowerCase() === ARCHIVE_CHECKLIST_NAME.toLowerCase();
+}
+
+/**
+ * Get the card's checklists split into main and archive (by name).
+ * Returns { main, archive } where each is a checklist object or null.
+ */
+async function getCardChecklists(cardId) {
+  var cls = await trello.getChecklists(cardId);
+  var main = null;
+  var archive = null;
+  for (var i = 0; i < cls.length; i++) {
+    var n = (cls[i].name || '').trim();
+    if (n === MAIN_CHECKLIST_NAME) main = cls[i];
+    else if (isArchiveChecklistName(n)) archive = cls[i];
+  }
+  return { main: main, archive: archive };
+}
+
+/**
+ * Ensure the main "Checklist" and "Checklist Archive" both exist on the
+ * card, creating whichever is missing. Returns { main, archive }.
+ */
+async function ensureCardChecklists(cardId) {
+  var found = await getCardChecklists(cardId);
+  if (!found.main) {
+    found.main = await trello.trelloPost('/cards/' + cardId + '/checklists', { name: MAIN_CHECKLIST_NAME });
+    console.log('[task-chain] Created "Checklist" on ' + cardId);
+  }
+  if (!found.archive) {
+    found.archive = await trello.trelloPost('/cards/' + cardId + '/checklists', { name: ARCHIVE_CHECKLIST_NAME });
+    console.log('[task-chain] Created "Checklist Archive" on ' + cardId);
+  }
+  return found;
+}
+
+/**
+ * Move every ZPT-format checkitem (name carries a trello.com/c/ link) from
+ * the main Checklist into the Checklist Archive. Custom checkitems without
+ * the link stay put. Returns the number of items parked.
+ */
+async function sweepZptItemsToArchive(cardId, mainChecklist, archiveChecklist) {
+  var moved = 0;
+  try {
+    var fresh = await trello.trelloGet('/checklists/' + mainChecklist.id + '?fields=name,checkItems');
+    var items = (fresh && fresh.checkItems) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (!extractShortLinkFromCheckitem(items[i].name)) continue;
+      await trello.moveCheckitem(cardId, items[i].id, archiveChecklist.id);
+      moved++;
+      if (moved % 5 === 0) await new Promise(function(r) { setTimeout(r, 100); });
+    }
+  } catch (e) {
+    console.log('[task-chain] Sweep failed: ' + e.message);
+  }
+  if (moved > 0) console.log('[task-chain] Parked ' + moved + ' ZPT items on ' + cardId);
+  return moved;
+}
+
 // ─── Phase / List Helpers ─────────────────────────────────────────────────
 
 const LIST_CACHE = new Map();
@@ -164,6 +233,9 @@ async function getExistingZptCardIds(cardId) {
   try {
     var cls = await trello.getChecklists(cardId);
     for (var i = 0; i < cls.length; i++) {
+      // Only the main Checklist counts as "existing" for duplicate
+      // prevention. Archive items are parked, not present.
+      if (isArchiveChecklistName(cls[i].name)) continue;
       var items = cls[i].checkItems || [];
       for (var j = 0; j < items.length; j++) {
         var sl = extractShortLinkFromCheckitem(items[j].name);
@@ -199,6 +271,8 @@ async function getCardZptItemsInOrder(cardId) {
   try {
     var cls = await trello.getChecklists(cardId);
     for (var i = 0; i < cls.length; i++) {
+      // Dormant: parked items in the archive are invisible to the engine.
+      if (isArchiveChecklistName(cls[i].name)) continue;
       var checkItems = cls[i].checkItems || [];
       for (var j = 0; j < checkItems.length; j++) {
         var sl = extractShortLinkFromCheckitem(checkItems[j].name);
@@ -302,6 +376,7 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
 async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, leadsMemberId, actorMemberId) {
   var total = taskChain.length;
   var added = 0;
+  var restored = 0;
 
   // --- Fetch hours from ZPTB template cards ---
   var hoursMap = await fetchHoursForChain(taskChain);
@@ -319,32 +394,53 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     console.log('[task-chain] Project sq ft: ' + projectSqFt);
   }
 
-  var cardData = await trello.getChecklists(card.id);
-  var checklistId = null;
-  if (cardData.length > 0) {
-    checklistId = cardData[0].id;
-  } else {
-    var newCl = await trello.trelloPost('/cards/' + card.id + '/checklists', { name: 'Checklist' });
-    checklistId = newCl.id;
-  }
+  // --- Ensure main Checklist + Checklist Archive exist ---
+  var { main, archive } = await ensureCardChecklists(card.id);
+  var checklistId = main.id;
 
-  // Check for existing ZPT checkitems to avoid duplicates
-  var existingShortLinks = new Set();
+  // Items currently on the main Checklist (shortLink -> item) and parked in
+  // the archive (shortLink -> item). Matching is by ZPTB shortLink (the id
+  // embedded in the checkitem link), never by title — so renamed template
+  // cards never orphan or duplicate items.
+  var mainItems = new Map();
+  var archiveItems = new Map();
   try {
-    var existing = await getExistingZptCardIds(card.id);
-    for (var sl of existing) existingShortLinks.add(sl);
+    var cls = await trello.getChecklists(card.id);
+    for (var i = 0; i < cls.length; i++) {
+      var n = (cls[i].name || '').trim();
+      var targetMap = null;
+      if (n === MAIN_CHECKLIST_NAME) targetMap = mainItems;
+      else if (isArchiveChecklistName(n)) targetMap = archiveItems;
+      if (!targetMap) continue;
+      var items = cls[i].checkItems || [];
+      for (var j = 0; j < items.length; j++) {
+        var sl = extractShortLinkFromCheckitem(items[j].name);
+        if (sl) targetMap.set(sl, items[j]);
+      }
+    }
   } catch (_) {}
 
   var addedItems = [];
-  for (var i = 0; i < total; i++) {
-    var item = taskChain[i];
+  for (var k = 0; k < total; k++) {
+    var item = taskChain[k];
     var sl = item.zptCard.shortLink;
     var url = item.zptCard.shortUrl || 'https://trello.com/c/' + sl;
     var itemName = '[' + item.zptCard.name + '](' + url + ')';
 
-    if (existingShortLinks.has(sl)) {
-      console.log('[task-chain] Skipping duplicate: ' + sl + ' (' + item.zptCard.name + ')');
+    if (mainItems.has(sl)) {
+      console.log('[task-chain] Already on main Checklist, skipping: ' + sl + ' (' + item.zptCard.name + ')');
       addedItems.push(null);
+      continue;
+    }
+
+    var parked = archiveItems.get(sl);
+    if (parked) {
+      // Restore from archive — keeps checked state and due date.
+      await trello.moveCheckitem(card.id, parked.id, checklistId);
+      restored++;
+      console.log('[task-chain] Restored from archive: ' + sl + ' (' + item.zptCard.name + ')' + (parked.state === 'complete' ? ' (checked)' : ''));
+      addedItems.push(null);
+      if (restored % 5 === 0) await new Promise(function(r) { setTimeout(r, 100); });
       continue;
     }
 
@@ -352,21 +448,19 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     if (leadsMemberId && item.phaseName === 'leads') body.idMember = leadsMemberId;
     var newItem = await trello.trelloPost('/checklists/' + checklistId + '/checkItems', body);
     addedItems.push({ item: item, checkItemId: newItem.id });
-    existingShortLinks.add(sl);
     added++;
 
-    if (i % 5 === 4) await new Promise(function(r) { setTimeout(r, 100); });
+    if (k % 5 === 4) await new Promise(function(r) { setTimeout(r, 100); });
   }
 
-  // --- Apply scheduling ---
+  // --- Apply scheduling (newly created items only; restored items keep their due dates) ---
   await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt);
 
-  // Auto-check block removed 2026-07-24. Humans check items as work is completed.
-  // All newly added items remain unchecked.
+  // All newly added items remain unchecked. Humans check items as work is completed.
 
-  await trello.addComment(card.id, 'Checklist updated: ' + added + ' items.');
-  console.log('[task-chain] Populated ' + added + ' items for "' + card.name + '"');
-  return { added: added, total: total };
+  await trello.addComment(card.id, 'Checklist updated: ' + added + ' items added' + (restored > 0 ? ', ' + restored + ' restored from archive' : '') + '.');
+  console.log('[task-chain] Populated ' + added + ' items (restored ' + restored + ') for "' + card.name + '"');
+  return { added: added, restored: restored, total: total };
 }
 
 module.exports = {
@@ -385,4 +479,11 @@ module.exports = {
   getCardZptItemsInOrder,
   populateEntireTaskChain,
   autoCheckedShortLinks,
+  // Checklist Archive
+  MAIN_CHECKLIST_NAME,
+  ARCHIVE_CHECKLIST_NAME,
+  isArchiveChecklistName,
+  getCardChecklists,
+  ensureCardChecklists,
+  sweepZptItemsToArchive,
 };

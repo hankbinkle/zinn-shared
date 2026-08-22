@@ -90,6 +90,7 @@ async function callAI(opts) {
   };
 
   // -- Backend 1: DeepSeek API (direct) ------------------------------------
+  var lastError = null;
   if (DEEPSEEK_KEY) {
     try {
       console.log('[shared/ai] Calling DeepSeek API (' + model + ')');
@@ -104,6 +105,7 @@ async function callAI(opts) {
       const content = extractContent(res);
       if (content) return { content: content, model: model, backend: 'deepseek' };
     } catch (e) {
+      lastError = e;
       console.log('[shared/ai] DeepSeek failed: ' + e.message + '. Trying OpenAI...');
     }
   }
@@ -124,6 +126,7 @@ async function callAI(opts) {
       const content = extractContent(res);
       if (content) return { content: content, model: payload.model, backend: 'openai' };
     } catch (e) {
+      lastError = e;
       console.log('[shared/ai] OpenAI failed: ' + e.message);
     }
   }
@@ -134,10 +137,7 @@ async function callAI(opts) {
   //   - Need a custom proxy endpoint on Railway Howard
   //   - SRM issue #1 tracks this
 
-  throw new Error(
-    'No AI backend available. Set DEEPSEEK_API_KEY or OPENAI_API_KEY ' +
-    'on the calling service\'s Railway env vars.'
-  );
+  throw new Error(friendlyMessage(lastError));
 }
 
 /**
@@ -163,6 +163,61 @@ function extractJSON(text) {
   const m2 = text.match(/\{[\s\S]*\}/);
   if (m2) { try { return JSON.parse(m2[0]); } catch (_) {} }
   return null;
+}
+
+/**
+ * Turn a raw backend error into plain language a human can understand.
+ * The technical details stay in the logs; the person reading the alert
+ * gets a simple explanation instead of jargon.
+ */
+function friendlyMessage(err) {
+  // No key was ever set up.
+  if (!err) {
+    return 'The AI helper is missing its secret key, so it cannot talk to ' +
+      'the AI service. Please ask the person who runs the computers to add ' +
+      'the key, then try again.';
+  }
+  var msg = err.message || String(err);
+
+  // Can't reach the AI service at all (network / DNS problems).
+  if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(msg)) {
+    return 'We could not reach the AI service at all - the internet ' +
+      'connection may have hiccupped. Please try again in a few minutes.';
+  }
+
+  // The AI service answered, but not happily.
+  var m = msg.match(/AI HTTP (\d+)/);
+  if (m) {
+    var code = parseInt(m[1], 10);
+    if (code === 401) {
+      return 'The AI service said our secret key is wrong or out of date. ' +
+        'Please ask the person who runs the computers to check the key.';
+    }
+    if (code === 402) {
+      return 'The AI service says our account has run out of credit. ' +
+        'Please ask the person who pays the bills to top it up.';
+    }
+    if (code === 429) {
+      return 'The AI service is too busy right now and asked us to try ' +
+        'again later. Please try again in a few minutes.';
+    }
+    if (code >= 500) {
+      return 'The AI service is having problems on its end right now. ' +
+        'Please try again in a few minutes.';
+    }
+    return 'The AI service answered with an unexpected response ' +
+      '(code ' + code + '). Please try again in a few minutes.';
+  }
+
+  // The answer came back but we could not read it.
+  if (/JSON parse|Unexpected token|AI JSON/i.test(msg)) {
+    return 'The AI service sent back an answer we could not read. ' +
+      'Please try again in a few minutes.';
+  }
+
+  // Anything else: keep it simple, technical detail goes to the logs.
+  return 'Something went wrong while talking to the AI service. ' +
+    'Please try again in a few minutes.';
 }
 
 module.exports = {
