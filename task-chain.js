@@ -231,6 +231,7 @@ function extractShortLinkFromCheckitem(rawName) {
 async function getExistingZptCardIds(cardId) {
   var ids = new Set();
   try {
+    var allZpt = await getAllZptCards();
     var cls = await trello.getChecklists(cardId);
     for (var i = 0; i < cls.length; i++) {
       // Only the main Checklist counts as "existing" for duplicate
@@ -238,8 +239,9 @@ async function getExistingZptCardIds(cardId) {
       if (isArchiveChecklistName(cls[i].name)) continue;
       var items = cls[i].checkItems || [];
       for (var j = 0; j < items.length; j++) {
-        var sl = extractShortLinkFromCheckitem(items[j].name);
-        if (sl) ids.add(sl);
+        var raw = extractShortLinkFromCheckitem(items[j].name);
+        if (!raw) continue;
+        ids.add(trello.canonicalRef(raw, allZpt) || raw);
       }
     }
   } catch (e) {}
@@ -281,6 +283,17 @@ async function getCardZptItemsInOrder(cardId) {
     }
   } catch (_) {}
   items.sort(function(a, b) { return a.pos - b.pos; });
+
+  // Canonicalize refs: a checkitem link may carry an 8-char shortLink OR a
+  // full 24-char card ID. Resolve both to the ZPTB card's shortLink so
+  // downstream lookups (followup pools, ACB firing, auto-check tracking)
+  // match regardless of which form Trello stored.
+  try {
+    var allCards = await getAllZptCards();
+    for (var k = 0; k < items.length; k++) {
+      items[k].shortLink = trello.canonicalRef(items[k].shortLink, allCards);
+    }
+  } catch (_) {}
   return items;
 }
 
@@ -401,10 +414,12 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   // Items currently on the main Checklist (shortLink -> item) and parked in
   // the archive (shortLink -> item). Matching is by ZPTB shortLink (the id
   // embedded in the checkitem link), never by title — so renamed template
-  // cards never orphan or duplicate items.
+  // cards never orphan or duplicate items. Refs are canonicalized so items
+  // linked with full 24-char card IDs match their 8-char shortLink lookups.
   var mainItems = new Map();
   var archiveItems = new Map();
   try {
+    var allZpt = await getAllZptCards();
     var cls = await trello.getChecklists(card.id);
     for (var i = 0; i < cls.length; i++) {
       var n = (cls[i].name || '').trim();
@@ -414,8 +429,10 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
       if (!targetMap) continue;
       var items = cls[i].checkItems || [];
       for (var j = 0; j < items.length; j++) {
-        var sl = extractShortLinkFromCheckitem(items[j].name);
-        if (sl) targetMap.set(sl, items[j]);
+        var raw = extractShortLinkFromCheckitem(items[j].name);
+        if (!raw) continue;
+        var canon = trello.canonicalRef(raw, allZpt);
+        targetMap.set(canon || raw, items[j]);
       }
     }
   } catch (_) {}

@@ -611,11 +611,67 @@ function parseFeeLines(feeSection) {
   return fees;
 }
 
+// ─── Card Ref Normalization (short vs long Trello IDs) ─────────────────────
+// Trello is inconsistent: checkitem links may carry an 8-char shortLink
+// (/c/ABC123) or a full 24-char card ID (/c/66f2e19a4dd7012acc37041c).
+// Both resolve identically through the API, but string comparisons between
+// them fail. These helpers make matching accept either form.
+
+/**
+ * Extract the raw card ref (shortLink OR full 24-char ID) from a checkitem
+ * name or any URL. Returns null when no trello.com/c/ link is present.
+ */
+function extractCardRef(nameOrUrl) {
+  if (!nameOrUrl) return null;
+  const m = String(nameOrUrl).match(/trello\.com\/c\/([a-zA-Z0-9]+)/);
+  return m ? m[1] : null;
+}
+
+/** True when ref looks like a full 24-char Trello card ID. */
+function isFullCardId(ref) {
+  return /^[a-zA-Z0-9]{24}$/.test(ref || '');
+}
+
+/**
+ * True when ref (shortLink or full ID) points at the given card object
+ * (which carries .shortLink and .id). Case-insensitive.
+ */
+function refMatchesCard(ref, card) {
+  if (!ref || !card) return false;
+  ref = String(ref).trim();
+  return ref === card.shortLink || ref === card.id ||
+         ref.toLowerCase() === (card.shortLink || '').toLowerCase() ||
+         ref.toLowerCase() === (card.id || '').toLowerCase();
+}
+
+/**
+ * Canonicalize a raw ref to the card's shortLink using a list of known
+ * cards. Returns the canonical shortLink when the ref matches a known card
+ * (by shortLink or full ID); otherwise returns the ref unchanged so callers
+ * can still attempt API resolution.
+ */
+function canonicalRef(ref, cards) {
+  if (!ref || !Array.isArray(cards)) return ref;
+  const r = String(ref).trim();
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i];
+    if (!c) continue;
+    if (c.shortLink === r || c.id === r) return c.shortLink || r;
+    if ((c.shortLink || '').toLowerCase() === r.toLowerCase() ||
+        (c.id || '').toLowerCase() === r.toLowerCase()) return c.shortLink || r;
+  }
+  return ref;
+}
+
 module.exports = {
   trelloGet,
   trelloPost,
   trelloPut,
   getCard,
+  extractCardRef,
+  isFullCardId,
+  refMatchesCard,
+  canonicalRef,
   getCardsInList,
   getBoardCustomFields,
   getCardCustomFieldItems,
