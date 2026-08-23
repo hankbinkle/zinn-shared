@@ -522,13 +522,17 @@ function buildClientGreeting(clientSection) {
     .map(l => l.replace(/^[-*•]\s*/, '').trim())
     .filter(Boolean);
 
-  // Filter out emails, phone numbers, addresses, URLs, and dashes
+  // Filter out emails, phone numbers (formatted AND bare digit runs),
+  // addresses, URLs, and dashes. Uses the shared phone module for the
+  // platform-wide standard so no phone format can leak into a greeting.
+  const phone = require('./phone');
   const nameLines = allLines.filter(l =>
     !/@/.test(l) &&
-    !/\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/.test(l) &&
+    !phone.isPhone(l) &&
     !/^(https?:\/\/)/i.test(l) &&
     !/^[-]{2,}$/.test(l.trim()) &&
-    !/^\d+\s/.test(l) // street addresses start with a number
+    !/^\d+\s/.test(l) && // street addresses start with a number
+    !/\b(street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|circle|cir|way|terrace|ter|place|pl|highway|hwy|p\.?o\.?\s*box)\b/i.test(l) // address keywords
   );
 
   if (nameLines.length === 0) return 'Hello,';
@@ -562,7 +566,7 @@ function buildClientGreeting(clientSection) {
   }
 
   // Female-first heuristic for multiple clients
-  var femaleNames = ['Teresa', 'Mary', 'Ann', 'Anne', 'Katherine', 'Elizabeth', 'Sarah', 'Jessica', 'Jennifer', 'Linda', 'Patricia', 'Susan', 'Lisa', 'Nancy', 'Karen', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura', 'Amanda', 'Melissa', 'Deborah', 'Stephanie', 'Rebecca', 'Shirley', 'Cynthia', 'Kathleen', 'Amy', 'Angela', 'Anna', 'Brenda', 'Pamela', 'Emma', 'Nicole', 'Samantha', 'Katherine', 'Christine', 'Debra', 'Rachel', 'Carolyn', 'Janet', 'Catherine', 'Maria', 'Heather', 'Diane', 'Ruby', 'Julie', 'Joyce', 'Evelyn', 'Joan', 'Victoria', 'Kelly', 'Christina', 'Lauren', 'Frances', 'Martha', 'Judith', 'Cheryl', 'Megan', 'Andrea', 'Olivia', 'Sophia', 'Isabella', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Ella', 'Avery', 'Scarlett', 'Grace', 'Chloe', 'Victoria', 'Riley', 'Aria', 'Lily', 'Aurora', 'Zoey', 'Nora', 'Camila', 'Penelope', 'Layla', 'Luna', 'Stella', 'Eliana', 'Hannah', 'Maya', 'Naomi', 'Ellie', 'Sadie', 'Aubrey', 'Claire', 'Alice', 'Eva', 'Hailey', 'Kaylee', 'Alyssa', 'Brianna', 'Julia', 'Kassia', 'Lindsay', 'Robin', 'Shukry', 'Shireen', 'Taylor', 'Casey'];
+  var femaleNames = ['Teresa', 'Mary', 'Ann', 'Anne', 'Katherine', 'Elizabeth', 'Sarah', 'Sara', 'Jessica', 'Jennifer', 'Linda', 'Patricia', 'Susan', 'Lisa', 'Nancy', 'Karen', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura', 'Amanda', 'Melissa', 'Deborah', 'Stephanie', 'Rebecca', 'Shirley', 'Cynthia', 'Kathleen', 'Amy', 'Angela', 'Anna', 'Brenda', 'Pamela', 'Emma', 'Nicole', 'Samantha', 'Katherine', 'Christine', 'Debra', 'Rachel', 'Carolyn', 'Janet', 'Catherine', 'Maria', 'Heather', 'Diane', 'Ruby', 'Julie', 'Joyce', 'Evelyn', 'Joan', 'Victoria', 'Kelly', 'Christina', 'Lauren', 'Frances', 'Martha', 'Judith', 'Cheryl', 'Megan', 'Andrea', 'Olivia', 'Sophia', 'Isabella', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Ella', 'Avery', 'Scarlett', 'Grace', 'Chloe', 'Victoria', 'Riley', 'Aria', 'Lily', 'Aurora', 'Zoey', 'Nora', 'Camila', 'Penelope', 'Layla', 'Luna', 'Stella', 'Eliana', 'Hannah', 'Maya', 'Naomi', 'Ellie', 'Sadie', 'Aubrey', 'Claire', 'Alice', 'Eva', 'Hailey', 'Kaylee', 'Alyssa', 'Brianna', 'Julia', 'Kassia', 'Lindsay', 'Robin', 'Shukry', 'Shireen', 'Taylor', 'Casey'];
 
   // Extract first names
   const firstNames = expanded.map(function(l) {
