@@ -169,7 +169,7 @@ function buildDocumentEmail(contentHtml, opts = {}) {
 
   let greetingHtml = '';
   if (opts.recipientName) {
-    greetingHtml = '<p style="font-family:' + FONT + ';font-size:14px;color:#242C39;margin:0 0 20px 0;">Hello ' + opts.recipientName + ',</div>';
+    greetingHtml = '<p style="font-family:' + FONT + ';font-size:14px;color:#242C39;margin:0 0 20px 0;">Hello ' + opts.recipientName + ',</p>';
   }
 
   const parts = [
@@ -186,12 +186,12 @@ function buildDocumentEmail(contentHtml, opts = {}) {
     '        ' + (opts.introHtml || ''),
               contentHtml,
     '        <div style="border-top:1px solid #E0E8EC;margin:24px 0 20px 0;"></div>',
-    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 4px 0;font-weight:600;">Rob Zinn, AIA</div>',
-    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 2px 0;"><a href="https://zinn.ai" style="color:#242C39;text-decoration:none;">zinn.ai</a></div>',
-    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0;">904.257.6117</div>',
+    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 4px 0;font-weight:600;">Rob Zinn, AIA</p>',
+    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0 0 2px 0;"><a href="https://zinn.ai" style="color:#242C39;text-decoration:none;">zinn.ai</a></p>',
+    '        <p style="font-family:' + FONT + ';font-size:12px;color:#242C39;margin:0;">904.257.6117</p>',
     '      </td></tr>',
     '      <tr><td style="background-color:#f0f0f0;padding:16px 40px;border-top:1px solid #E0E8EC;">',
-    '        <p style="font-family:' + FONT + ';font-size:11px;color:#81A2B2;margin:0;text-align:center;">1022 park street #407, jacksonville, FL 32204 &nbsp;|&nbsp; <a href="https://zinn.ai" style="color:#81A2B2;text-decoration:none;">zinn.ai</a></div>',
+    '        <p style="font-family:' + FONT + ';font-size:11px;color:#81A2B2;margin:0;text-align:center;">1022 park street #407, jacksonville, FL 32204 &nbsp;|&nbsp; <a href="https://zinn.ai" style="color:#81A2B2;text-decoration:none;">zinn.ai</a></p>',
     '      </td></tr>',
     '    </table>',
     '  </td></tr>',
