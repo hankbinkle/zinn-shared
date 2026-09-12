@@ -57,7 +57,9 @@ async function ensureCardChecklists(cardId) {
 /**
  * Move every ZPT-format checkitem (name carries a trello.com/c/ link) from
  * the main Checklist into the Checklist Archive. Custom checkitems without
- * the link stay put. Returns the number of items parked.
+ * the link stay put. Parked items are dormant, so any due date on them is
+ * cleared as well (the exited phase's schedule no longer applies). Returns
+ * the number of items parked.
  */
 async function sweepZptItemsToArchive(cardId, mainChecklist, archiveChecklist) {
   var moved = 0;
@@ -67,6 +69,9 @@ async function sweepZptItemsToArchive(cardId, mainChecklist, archiveChecklist) {
     for (var i = 0; i < items.length; i++) {
       if (!extractShortLinkFromCheckitem(items[i].name)) continue;
       await trello.moveCheckitem(cardId, items[i].id, archiveChecklist.id);
+      if (items[i].due) {
+        await trello.trelloPut('/cards/' + cardId + '/checkItem/' + items[i].id, { due: 'null' });
+      }
       moved++;
       if (moved % 5 === 0) await new Promise(function(r) { setTimeout(r, 100); });
     }
@@ -357,13 +362,39 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
 
   for (var i = 0; i < addedItems.length; i++) {
     if (!addedItems[i] || !schedule[i]) continue;
+    var entry = addedItems[i];
     var s = schedule[i];
     if (!s.dueISO && !s.startISO) continue;
 
-    var ci = addedItems[i].checkItemId;
-    var zc = addedItems[i].item.zptCard;
+    var ci = entry.checkItemId;
+    var zc = entry.item.zptCard;
     var baseUrl = zc.shortUrl || 'https://trello.com/c/' + zc.shortLink;
-    var hiddenMd = scheduler.buildStartDateMarkdown(s.startISO);
+    var hiddenMd = scheduler.buildDurationMarkdown(s.scaledHours);
+
+    if (entry.restored) {
+      // Completed restored items stay untouched (work already done).
+      if (entry.state === 'complete') continue;
+      // Refresh the hidden duration marker in place, preserving the rest
+      // of the name (title, follow-up counters, renamed titles). Old
+      // start_date markers are stripped too, so legacy items migrate.
+      var refreshedName = refreshDurationMarker(entry.existingName, hiddenMd);
+      if (refreshedName !== entry.existingName) {
+        try {
+          await trello.trelloPut('/cards/' + cardId + '/checkItem/' + ci, { name: refreshedName });
+        } catch (e) {
+          console.log('[task-chain] Failed to refresh name for checkitem ' + ci + ': ' + e.message);
+        }
+      }
+      if (s.dueISO) {
+        try {
+          await trello.trelloPut('/cards/' + cardId + '/checkItem/' + ci, { due: s.dueISO });
+        } catch (e) {
+          console.log('[task-chain] Failed to set due for checkitem ' + ci + ': ' + e.message);
+        }
+      }
+      continue;
+    }
+
     var fullName = '[' + zc.name + '](' + baseUrl + ')' + hiddenMd;
 
     try {
@@ -382,6 +413,20 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
   }
 
   console.log('[task-chain] Applied schedule to ' + schedule.filter(function(s) { return s.dueISO; }).length + ' checkitems');
+}
+
+/**
+ * Replace the hidden duration (or legacy start_date) marker in a checkitem
+ * name with a fresh duration marker. Everything else (title, follow-up
+ * counters, renamed template titles) is preserved. Returns the original
+ * name when nothing changes.
+ */
+function refreshDurationMarker(name, hiddenMd) {
+  var base = (name || '')
+    .replace(/\s*\[ *\]\(duration=[^)]*\)/g, '')
+    .replace(/\s*\[ *\]\(start_date=[^)]*\)/g, '');
+  if (!hiddenMd) return base;
+  return base + hiddenMd;
 }
 
 // ─── Population ───────────────────────────────────────────────────────────────
@@ -452,11 +497,12 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
 
     var parked = archiveItems.get(sl);
     if (parked) {
-      // Restore from archive — keeps checked state and due date.
+      // Restore from archive — keeps checked state. The item is re-scheduled
+      // below (park cleared its due; the fresh schedule restores it).
       await trello.moveCheckitem(card.id, parked.id, checklistId);
       restored++;
       console.log('[task-chain] Restored from archive: ' + sl + ' (' + item.zptCard.name + ')' + (parked.state === 'complete' ? ' (checked)' : ''));
-      addedItems.push(null);
+      addedItems.push({ item: item, checkItemId: parked.id, restored: true, existingName: parked.name, state: parked.state });
       if (restored % 5 === 0) await new Promise(function(r) { setTimeout(r, 100); });
       continue;
     }
@@ -470,7 +516,10 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     if (k % 5 === 4) await new Promise(function(r) { setTimeout(r, 100); });
   }
 
-  // --- Apply scheduling (newly created items only; restored items keep their due dates) ---
+  // --- Apply scheduling (newly created + restored items) ---
+  // Restored items keep their existing name (follow-up counters, renamed
+  // titles); only the hidden start-date marker and due date are refreshed.
+  // Completed restored items stay untouched (work already done).
   await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt);
 
   // All newly added items remain unchecked. Humans check items as work is completed.

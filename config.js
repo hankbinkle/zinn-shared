@@ -67,10 +67,6 @@ module.exports = {
   GMAIL_TOKEN_PATH: process.env.GMAIL_TOKEN_PATH ||
     path.join(process.env.HOME || '/root', '.openclaw/credentials/gmail-zinn-token.json'),
 
-  // ── Harvest ──────────────────────────────────────────────────────────────
-  HARVEST_ACCOUNT_ID: process.env.HARVEST_ACCOUNT_ID || '1306713',
-  HARVEST_TOKEN: process.env.HARVEST_TOKEN || readCredFile('harvest_token.txt') || '',
-
   // ── Local paths (for local dev/testing) ──────────────────────────────────
   LOCAL_DROPBOX_ROOT: process.env.LOCAL_DROPBOX_ROOT ||
     (process.env.HOME ? path.join(process.env.HOME, 'ZINN Dropbox') : '/Users/robzinn/ZINN Dropbox'),
@@ -82,7 +78,6 @@ module.exports = {
     trello_token: 'trello-token.txt',
     gmail_creds: 'gmail-zinn-credentials.json',
     gmail_token: 'gmail-zinn-token.json',
-    harvest_token: 'harvest_token.txt',
     dropbox_key: 'm91k4jaxula4gzv',
   },
 };

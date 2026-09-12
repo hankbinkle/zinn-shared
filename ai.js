@@ -104,6 +104,9 @@ async function callAI(opts) {
       );
       const content = extractContent(res);
       if (content) return { content: content, model: model, backend: 'deepseek' };
+      // 200 but no readable answer: capture finish_reason + reasoning so
+      // the alert can explain what happened and what the model was working on.
+      lastError = emptyResponseError(res);
     } catch (e) {
       lastError = e;
       console.log('[shared/ai] DeepSeek failed: ' + e.message + '. Trying OpenAI...');
@@ -125,6 +128,7 @@ async function callAI(opts) {
       );
       const content = extractContent(res);
       if (content) return { content: content, model: payload.model, backend: 'openai' };
+      lastError = emptyResponseError(res);
     } catch (e) {
       lastError = e;
       console.log('[shared/ai] OpenAI failed: ' + e.message);
@@ -147,6 +151,21 @@ function extractContent(res) {
   if (!res || !res.choices || !res.choices[0]) return null;
   const msg = res.choices[0].message;
   return msg && msg.content ? msg.content : null;
+}
+
+/**
+ * Build a diagnostic error for a 200 response with no readable answer.
+ * Captures finish_reason and the model's reasoning text so the alert can
+ * explain what happened and what the model was working on.
+ */
+function emptyResponseError(res) {
+  const choice = res && res.choices && res.choices[0];
+  const finish = choice && choice.finish_reason;
+  const reasoning = (choice && choice.message && choice.message.reasoning_content) || '';
+  const e = new Error('AI returned an empty response');
+  e.finishReason = finish;
+  e.reasoning = reasoning;
+  return e;
 }
 
 /**
@@ -178,6 +197,20 @@ function friendlyMessage(err) {
       'the key, then try again.';
   }
   var msg = err.message || String(err);
+
+  // The key is fine but the model sent back nothing readable.
+  if (/empty response/i.test(msg)) {
+    if (err.finishReason === 'length') {
+      var snippet = (err.reasoning || '').trim();
+      var what = snippet
+        ? ' It was mid-way through: "' + snippet.slice(0, 400) + '"'
+        : '';
+      return 'The AI ran out of room while thinking through the request and ' +
+        'returned no answer.' + what;
+    }
+    return 'The AI service sent back an empty answer. Please try again in ' +
+      'a few minutes.';
+  }
 
   // Can't reach the AI service at all (network / DNS problems).
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(msg)) {

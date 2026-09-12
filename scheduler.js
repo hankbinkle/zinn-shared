@@ -216,6 +216,8 @@ function calculateSchedule(hoursList, anchorDate) {
 /**
  * Build the hidden start-date markdown suffix for board-visualizer compatibility.
  * Format: " [ ](start_date=YYYY-MM-DD)"
+ * LEGACY: kept for backward compatibility with existing checkitem names.
+ * New schedules emit the duration form (buildDurationMarkdown) instead.
  */
 function buildStartDateMarkdown(isoString) {
   if (!isoString) return '';
@@ -227,6 +229,18 @@ function buildStartDateMarkdown(isoString) {
   return ' [ ](start_date=' + ymd + ')';
 }
 
+/**
+ * Build the hidden duration markdown suffix for board-visualizer compatibility.
+ * Format: " [ ](duration=N)" where N is the task's scaled hours (e.g. 32).
+ * Duration is the invariant: the visualizer derives the span as due minus
+ * duration, so the marker never goes stale when a due date is re-stamped.
+ */
+function buildDurationMarkdown(scaledHours) {
+  if (!scaledHours || scaledHours <= 0) return '';
+  var n = Math.round(scaledHours * 10) / 10;
+  return ' [ ](duration=' + n + ')';
+}
+
 // ===== Exports ==============================================================
 
 module.exports = {
@@ -236,5 +250,6 @@ module.exports = {
   addBusinessHours: addBusinessHours,
   calculateSchedule: calculateSchedule,
   buildStartDateMarkdown: buildStartDateMarkdown,
+  buildDurationMarkdown: buildDurationMarkdown,
   BENCHMARK_SQFT: BENCHMARK_SQFT,
 };
