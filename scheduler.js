@@ -2,7 +2,7 @@
 // scheduler.js — Duration/scheduling utilities for ZINN project tasks
 //
 // Converts template hours into scaled durations, calculates sequential
-// due dates within business hours (9AM-5PM ET, weekdays only), and
+// due dates within business hours (9AM-4PM ET, weekdays only), and
 // formats hidden start date markdown for board-visualizer compatibility.
 // =============================================================================
 'use strict';
@@ -106,7 +106,7 @@ function nextBusinessDay9am(fromDate) {
 
 /**
  * Add a duration in hours to a starting point, advancing through
- * 9AM-5PM ET workdays and skipping weekends.
+ * 9AM-4PM ET workdays and skipping weekends.
  *
  * @param {Date} startDate - Start Date object (assumed to be an ET time
  *   already, i.e., its UTC representation matches an ET wall-clock + offset)
@@ -135,8 +135,8 @@ function addBusinessHours(startDate, hoursToAdd) {
       continue;
     }
 
-    // After work hours (>= 5 PM) -> next day 9 AM
-    if (c.hour >= 17) {
+    // After work hours (>= 4 PM) -> next day 9 AM
+    if (c.hour >= 16) {
       c.day += 1;
       c.hour = 9;
       c.minute = 0;
@@ -144,7 +144,7 @@ function addBusinessHours(startDate, hoursToAdd) {
     }
 
     // Within the workday — how many minutes left today?
-    var minLeftToday = (17 - c.hour) * 60 - c.minute;
+    var minLeftToday = (16 - c.hour) * 60 - c.minute;
 
     if (minLeftToday >= remainingMin) {
       // Finishes today
