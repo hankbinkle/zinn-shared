@@ -12,6 +12,15 @@
 # =============================================================================
 set -euo pipefail
 
+# DEPRECATED (2026-09-13): shared modules are now served from git at build time.
+# Each Railway service git-clones zinn-shared in its Dockerfile/railway.json.
+# Copying shared modules into individual skills reintroduces the stale-copy
+# drift this script was replaced to fix. Use publish.sh to push changes instead.
+echo "sync-shared.sh is deprecated and disabled."
+echo "Shared modules are served from git at build time - do not copy them into skills."
+echo "To update shared modules: edit ~/.openclaw/skills/_shared/, then run bash publish.sh."
+exit 1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_DIR="$SCRIPT_DIR"
 SKILLS_DIR="$(dirname "$SHARED_DIR")"
