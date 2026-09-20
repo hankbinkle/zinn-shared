@@ -24,6 +24,17 @@ const TOKEN_FILE = process.env.QBO_TOKEN_FILE || '/Users/robzinn/.openclaw/crede
 const CREDS_FILE = process.env.QBO_CREDS_FILE || '/Users/robzinn/.openclaw/credentials/qbo.txt';
 const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
 const API_BASE = 'https://quickbooks.api.intuit.com';
+// Single-owner borrow config (local Mac only): read a Railway service's fresh
+// token instead of holding a local refresh token. Set only when QBO_TOKEN_FILE
+// is unset. Merged in from timesheet-creator's copy 2026-09-20.
+const BORROW_FILE = process.env.QBO_BORROW_FILE || '/Users/robzinn/.openclaw/credentials/qbo_borrow.json';
+
+function loadBorrowConfig() {
+  try {
+    if (fs.existsSync(BORROW_FILE)) return JSON.parse(fs.readFileSync(BORROW_FILE, 'utf8'));
+  } catch (e) { /* ignore */ }
+  return null;
+}
 
 function httpReq(url, options, body) {
   return new Promise((resolve, reject) => {
@@ -74,6 +85,15 @@ class QBOClient {
 
   loadTokens() {
     if (this.tokens) return this.tokens;
+    // Borrow mode (local Mac only - Railway sets QBO_TOKEN_FILE): use the
+    // Railway service's fresh token instead of a local refresh token.
+    if (!process.env.QBO_TOKEN_FILE) {
+      const borrow = loadBorrowConfig();
+      if (borrow) {
+        this.tokens = { borrow: true, _borrow: borrow, access_token: null, realm_id: borrow.realm_id || null };
+        return this.tokens;
+      }
+    }
     if (process.env.QBO_REFRESH_TOKEN) {
       this.tokens = {
         client_id: process.env.QBO_CLIENT_ID,
@@ -82,6 +102,18 @@ class QBOClient {
         access_token: null,
         realm_id: process.env.QBO_REALM_ID,
       };
+      // A persisted token file beats the env value. On Railway QBO_TOKEN_FILE
+      // points at the volume (/app/data/qbo_tokens.json) so a deploy never
+      // loses a fresher token; locally it is the canonical qbo_tokens.json.
+      // A stale saved token is recovered from by the env fallback in
+      // refreshAccessToken.
+      try {
+        if (fs.existsSync(TOKEN_FILE)) {
+          const saved = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+          if (saved.refresh_token) this.tokens.refresh_token = saved.refresh_token;
+          if (saved.access_token) this.tokens.access_token = saved.access_token;
+        }
+      } catch (e) { /* fall back to env values */ }
     } else {
       this.tokens = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
     }
@@ -90,6 +122,15 @@ class QBOClient {
 
   async refreshAccessToken() {
     const t = this.loadTokens();
+    if (t.borrow) {
+      const cfg = t._borrow;
+      const url = cfg.url + '?token=' + encodeURIComponent(cfg.token);
+      const res = await httpReq(url, { method: 'GET' });
+      if (!res || !res.access_token) throw new Error('QBO borrow endpoint returned no access token');
+      t.access_token = res.access_token;
+      if (res.realm_id) t.realm_id = res.realm_id;
+      return t;
+    }
     // Durable copy first (added 2026-09-20): a re-authorised token lands in the
     // DB and is seen by every consumer of this service, instead of being lost
     // when the env seed goes stale. A stored row superseded by a later
@@ -145,9 +186,18 @@ class QBOClient {
       try { await tokenStore.storeToken(QBO_TOKEN_SERVICE, 'refresh', t.refresh_token, null); }
       catch (e) { /* non-fatal - in-memory token still works */ }
     }
-    if (!process.env.QBO_REFRESH_TOKEN) {
-      fs.writeFileSync(TOKEN_FILE, JSON.stringify(t, null, 1));
-    }
+    // Persist to the token file too (Railway: QBO_TOKEN_FILE -> volume) so a
+    // redeploy never loses the freshest token. Client credentials are stripped
+    // so they are never written to disk, and authorized_at/expiry are kept
+    // meaningful for the renewal runbook.
+    try {
+      const out = Object.assign({}, t);
+      delete out.client_id;
+      delete out.client_secret;
+      if (!out.authorized_at) out.authorized_at = new Date().toISOString();
+      if (res.expires_in) out.expiry = Date.now() + Number(res.expires_in) * 1000;
+      fs.writeFileSync(TOKEN_FILE, JSON.stringify(out, null, 1));
+    } catch (e) { /* read-only path - in-memory token still works */ }
     return t;
   }
 
@@ -360,7 +410,7 @@ class QBOClient {
   }
 
   // ─── TimeActivity ───
-  async createTimeActivity({ employeeId, itemId, hours, txnDate, description, billable, customerId }) {
+  async createTimeActivity({ employeeId, itemId, hours, txnDate, description, billable, customerId, hourlyRate }) {
     const h = Number(hours);
     const whole = Math.floor(h);
     const mins = Math.round((h - whole) * 60);
@@ -373,10 +423,27 @@ class QBOClient {
       Description: description,
       BillableStatus: billable ? 'Billable' : 'NotBillable',
       NameOf: 'Employee',
+      ...(hourlyRate != null ? { HourlyRate: Number(hourlyRate) } : {}),
       ...(customerId ? { CustomerRef: { value: String(customerId) } } : {}),
     });
     const res = await this.api('timeactivity', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
     return res.TimeActivity;
+  }
+
+  // Archive (deactivate) an employee. Sparse update - only Active flips.
+  // Rob-approved 2026-09-01: 9 former employees archived, 5 current stay.
+  async archiveEmployee(id, syncToken) {
+    const body = JSON.stringify({ Id: String(id), SyncToken: syncToken, sparse: true, Active: false });
+    const res = await this.api('employee', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
+    return res.Employee;
+  }
+
+  // Set an employee's billable rate (QBO Employee.BillableRate). Requires the
+  // employee's Id + a fresh SyncToken (fetch the record first).
+  async updateEmployeeBillableRate(id, syncToken, billableRate) {
+    const body = JSON.stringify({ Id: String(id), SyncToken: syncToken, sparse: true, BillableRate: Number(billableRate) });
+    const res = await this.api('employee', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
+    return res.Employee;
   }
 
   // Sparse update of a TimeActivity (e.g. staff correction of hours).
