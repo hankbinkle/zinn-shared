@@ -1,10 +1,24 @@
 // qbo.js - QuickBooks Online client for timesheet_creator
 // Handles token refresh, TimeActivity posting, employees/items/customers queries.
 // Credentials: ~/.openclaw/credentials/qbo_tokens.json (local) or env vars (Railway).
+//
+// SINGLE-OWNER RULE (2026-09-20, Rob): Intuit keeps only ONE active refresh
+// token per app+company, so a second sign-in silently kills the first. ZINN
+// has exactly one QuickBooks sign-in, owned by the shared_resource_manager
+// skill. Services are consumers only: no service may host its own sign-in or
+// callback route. Renewal is the documented procedure in SRM's SKILL.md.
+//
+// Token storage (2026-09-20): mirrors dropbox.js. The Postgres `tokens` table
+// is the durable copy; QBO_REFRESH_TOKEN is only the seed. See refreshAccessToken.
 
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+
+// Optional durable store - services without a DATABASE_URL keep env/file behaviour.
+let tokenStore = null;
+try { tokenStore = require('./db'); } catch (e) { tokenStore = null; }
+const QBO_TOKEN_SERVICE = 'qbo';
 
 const TOKEN_FILE = process.env.QBO_TOKEN_FILE || '/Users/robzinn/.openclaw/credentials/qbo_tokens.json';
 const CREDS_FILE = process.env.QBO_CREDS_FILE || '/Users/robzinn/.openclaw/credentials/qbo.txt';
@@ -76,6 +90,18 @@ class QBOClient {
 
   async refreshAccessToken() {
     const t = this.loadTokens();
+    // Durable copy first (added 2026-09-20): a re-authorised token lands in the
+    // DB and is seen by every consumer of this service, instead of being lost
+    // when the env seed goes stale. A stored row superseded by a later
+    // re-authorisation would wedge the service, so a rejected stored token
+    // falls back to the env token and re-persists.
+    if (tokenStore) {
+      try {
+        const row = await tokenStore.getStoredToken(QBO_TOKEN_SERVICE, 'refresh');
+        if (row && row.value) t.refresh_token = row.value;
+      } catch (e) { /* no stored copy - keep the env/file token */ }
+    }
+
     // Env-managed (Railway): client id/secret come from env vars. Local
     // fallback reads qbo.txt. (Fix 2026-08-30: the file was read
     // unconditionally, breaking QBO calls on Railway where the file
@@ -90,20 +116,35 @@ class QBOClient {
       clientSecret = creds.clientSecret;
     }
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: t.refresh_token,
-    }).toString();
-    const res = await httpReq(TOKEN_URL, {
+    const request = (refreshToken) => httpReq(TOKEN_URL, {
       method: 'POST',
       headers: {
         Authorization: 'Basic ' + auth,
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },
-    }, body);
+    }, new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }).toString());
+
+    let res;
+    try {
+      res = await request(t.refresh_token);
+    } catch (e) {
+      const envToken = process.env.QBO_REFRESH_TOKEN;
+      if (envToken && envToken !== t.refresh_token) {
+        console.log('[qbo] stored token rejected - retrying with the env token');
+        res = await request(envToken);
+        t.refresh_token = envToken;
+      } else {
+        throw e;
+      }
+    }
+
     t.access_token = res.access_token;
     if (res.refresh_token) t.refresh_token = res.refresh_token;
+    if (tokenStore) {
+      try { await tokenStore.storeToken(QBO_TOKEN_SERVICE, 'refresh', t.refresh_token, null); }
+      catch (e) { /* non-fatal - in-memory token still works */ }
+    }
     if (!process.env.QBO_REFRESH_TOKEN) {
       fs.writeFileSync(TOKEN_FILE, JSON.stringify(t, null, 1));
     }
