@@ -29,6 +29,15 @@ const API_BASE = 'https://quickbooks.api.intuit.com';
 // is unset. Merged in from timesheet-creator's copy 2026-09-20.
 const BORROW_FILE = process.env.QBO_BORROW_FILE || '/Users/robzinn/.openclaw/credentials/qbo_borrow.json';
 
+// Broker mode (2026-09-21, SRM single-owner rule): a CONSUMER service holds no
+// refresh token at all and asks the HOLDER for a short-lived access token.
+// Set QBO_BROKER_URL (+ QBO_BROKER_TOKEN) on the consumer instead of
+// QBO_REFRESH_TOKEN. The refresh token never leaves the holder.
+const BROKER_URL = process.env.QBO_BROKER_URL || '';
+const BROKER_GUARD = process.env.QBO_BROKER_TOKEN || '';
+// Access tokens live ~60 min. Treat a cached one as usable until 60s before expiry.
+const ACCESS_SKEW_MS = 60 * 1000;
+
 function loadBorrowConfig() {
   try {
     if (fs.existsSync(BORROW_FILE)) return JSON.parse(fs.readFileSync(BORROW_FILE, 'utf8'));
@@ -94,6 +103,20 @@ class QBOClient {
         return this.tokens;
       }
     }
+    // Consumer mode: broker URL + guard set means this process must never use a
+    // refresh token of its own, even if a stale one is still in the env during
+    // the migration. Takes precedence over QBO_REFRESH_TOKEN deliberately.
+    if (BROKER_URL && BROKER_GUARD) {
+      this.tokens = {
+        broker: true,
+        _broker_url: BROKER_URL,
+        _broker_guard: BROKER_GUARD,
+        access_token: null,
+        access_expiry: 0,
+        realm_id: process.env.QBO_REALM_ID || null,
+      };
+      return this.tokens;
+    }
     if (process.env.QBO_REFRESH_TOKEN) {
       this.tokens = {
         client_id: process.env.QBO_CLIENT_ID,
@@ -122,6 +145,36 @@ class QBOClient {
 
   async refreshAccessToken() {
     const t = this.loadTokens();
+    // Broker mode: fetch an access token from the holder. Cached in memory
+    // until 60s before expiry so a burst of API calls costs one broker call.
+    if (t.broker) {
+      if (t.access_token && Date.now() < (t.access_expiry || 0)) return t;
+      try {
+        const res = await httpReq(t._broker_url + '?token=' + encodeURIComponent(t._broker_guard), { method: 'GET' });
+        if (!res || !res.access_token) throw new Error('broker returned no access token');
+        t.access_token = res.access_token;
+        if (res.realm_id) t.realm_id = res.realm_id;
+        t.access_expiry = Date.now() + (Number(res.expires_in) || 3300) * 1000 - ACCESS_SKEW_MS;
+        return t;
+      } catch (e) {
+        // Rollout safety net: while a local refresh token is still present,
+        // a broken broker degrades to local refresh instead of going dark.
+        // Once the consumer's token is removed this path simply cannot run.
+        if (process.env.QBO_REFRESH_TOKEN) {
+          console.log('[qbo] broker unavailable (' + e.message + ') - falling back to the local refresh token');
+          this.tokens = {
+            client_id: process.env.QBO_CLIENT_ID,
+            client_secret: process.env.QBO_CLIENT_SECRET,
+            refresh_token: process.env.QBO_REFRESH_TOKEN,
+            access_token: null,
+            access_expiry: 0,
+            realm_id: process.env.QBO_REALM_ID,
+          };
+          return this.refreshAccessToken();
+        }
+        throw e;
+      }
+    }
     if (t.borrow) {
       const cfg = t._borrow;
       const url = cfg.url + '?token=' + encodeURIComponent(cfg.token);
@@ -181,6 +234,7 @@ class QBOClient {
     }
 
     t.access_token = res.access_token;
+    if (res.expires_in) t.access_expiry = Date.now() + Number(res.expires_in) * 1000 - ACCESS_SKEW_MS;
     if (res.refresh_token) t.refresh_token = res.refresh_token;
     if (tokenStore) {
       try { await tokenStore.storeToken(QBO_TOKEN_SERVICE, 'refresh', t.refresh_token, null); }
@@ -203,7 +257,9 @@ class QBOClient {
 
   async api(path, options = {}) {
     const t = this.loadTokens();
-    if (!t.access_token) await this.refreshAccessToken();
+    // Refresh proactively when there is no token or the cached one is at/past
+    // its usable life (broker mode sets access_expiry; other modes leave it unset).
+    if (!t.access_token || (t.access_expiry && Date.now() >= t.access_expiry)) await this.refreshAccessToken();
     const headers = { Authorization: 'Bearer ' + t.access_token, Accept: 'application/json', ...(options.headers || {}) };
     const url = `${API_BASE}/v3/company/${t.realm_id}/${path}?minorversion=73${options.qs || ''}`;
     try {
