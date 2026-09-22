@@ -7,8 +7,22 @@
 
 const https = require('https');
 const fetch = require('node-fetch');
-const { getStoredToken, storeToken, getSetting, setSetting } = require('./db');
 const { DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_TEAM_MEMBER_EMAIL } = require('./config');
+
+// The db module hard-requires the `pg` package. A service with no DATABASE_URL
+// (and therefore no `pg` dependency) must still be able to load this module
+// (e.g. the timesheet_creator holder route, 2026-09-22), so a missing db module
+// degrades to no persistence instead of a load-time crash. Mirrors the lazy
+// pattern qbo.js already uses for the same reason.
+let getStoredToken = async () => null;
+let storeToken = async () => {};
+let getSetting = async () => null;
+let setSetting = async () => {};
+try {
+  ({ getStoredToken, storeToken, getSetting, setSetting } = require('./db'));
+} catch (e) {
+  console.warn('[shared/dropbox] db module unavailable (' + e.message + ') - running without token persistence');
+}
 
 /**
  * Dropbox-safe HTTP request using https module (bypasses node-fetch Premature close issues on Railway).
