@@ -50,6 +50,16 @@ function dropboxFetch(url, opts) {
 const DROPBOX_API = 'https://api.dropboxapi.com';
 const DROPBOX_CONTENT = 'https://content.dropboxapi.com';
 
+// Broker mode (2026-09-22, SRM single-owner connection model): a CONSUMER holds
+// no refresh token at all and asks the HOLDER for a short-lived access token.
+// Set DROPBOX_BROKER_URL (+ DROPBOX_BROKER_TOKEN) on the consumer instead of
+// DROPBOX_REFRESH_TOKEN. The refresh token never leaves the holder.
+const BROKER_URL = process.env.DROPBOX_BROKER_URL || '';
+const BROKER_GUARD = process.env.DROPBOX_BROKER_TOKEN || '';
+// Access tokens live 4h by default; treat a cached one as usable until 60s before expiry.
+const ACCESS_SKEW_MS = 60 * 1000;
+let brokerCache = null; // { token, expiry, memberId, rootNs }
+
 /**
  * Dropbox fetch with retry on rate-limit (429) and transient network errors.
  * Exponential backoff: 1s, 2s, 4s, 8s (5 attempts total), honors Retry-After.
@@ -95,6 +105,42 @@ async function fetchWithRetry(url, opts, label) {
  */
 async function getAccessToken() {
   try {
+    // 0. Broker mode: a consumer with no refresh token of its own fetches an
+    // access token from the holder. Deliberately takes precedence over any
+    // local refresh token still in the env during the migration. Cached in
+    // memory until 60s before expiry so a burst of API calls costs one call.
+    if (BROKER_URL && BROKER_GUARD) {
+      if (brokerCache && Date.now() < brokerCache.expiry) return brokerCache.token;
+      try {
+        const url = BROKER_URL + (BROKER_URL.indexOf('?') === -1 ? '?' : '&') +
+          'token=' + encodeURIComponent(BROKER_GUARD);
+        const res = await dropboxFetch(url, { method: 'GET' });
+        const data = res && res.ok ? res.json() : null;
+        if (!data || !data.access_token) {
+          throw new Error('broker returned no access token (HTTP ' + (res && res.status) + ')');
+        }
+        brokerCache = {
+          token: data.access_token,
+          expiry: Date.now() + (Number(data.expires_in) || 14400) * 1000 - ACCESS_SKEW_MS,
+          memberId: data.team_member_id || null,
+          rootNs: data.root_namespace_id || null,
+        };
+        if (brokerCache.memberId) cachedMemberId = brokerCache.memberId;
+        if (brokerCache.rootNs) cachedRootNs = brokerCache.rootNs;
+        console.log('[shared/dropbox] Broker access token acquired (expires in ' + (data.expires_in || '?') + 's)');
+        return brokerCache.token;
+      } catch (e) {
+        // Rollout safety: while a local refresh token is still present, a broken
+        // broker degrades to the legacy local refresh instead of going dark.
+        // Once the consumer's refresh token is removed this branch cannot run.
+        if (!process.env.DROPBOX_REFRESH_TOKEN) {
+          console.error('[shared/dropbox] Broker unavailable and no local refresh token: ' + e.message);
+          return null;
+        }
+        console.log('[shared/dropbox] Broker unavailable (' + e.message + ') - falling back to the local refresh token');
+      }
+    }
+
     // 1. Check DB for valid cached access token
     const cached = await getStoredToken('dropbox', 'access');
     if (cached && cached.expiresAt && Date.now() < cached.expiresAt - 60000) {
@@ -577,8 +623,36 @@ async function downloadTextFile(dropboxPath) {
   }
 }
 
+/**
+ * Holder-side broker payload (SRM connection model, 2026-09-22).
+ * Returns everything a consumer needs and NEVER the refresh token.
+ * The access token itself comes from the normal cached path, so a polling
+ * consumer does not hit Dropbox per call.
+ * @returns {Promise<{access_token:string, team_member_id:string|null, root_namespace_id:string|null, expires_in:number}|null>}
+ */
+async function getBrokerInfo() {
+  const token = await getAccessToken();
+  if (!token) return null;
+  let expiresIn = 14400;
+  try {
+    const cached = await getStoredToken('dropbox', 'access');
+    if (cached && cached.expiresAt) {
+      expiresIn = Math.max(60, Math.floor((cached.expiresAt - Date.now()) / 1000));
+    }
+  } catch (e) { /* fall back to the default life */ }
+  const memberId = await getTeamMemberId(token);
+  const rootNs = memberId ? await getTeamRootNamespace(token, memberId) : null;
+  return {
+    access_token: token,
+    team_member_id: memberId || null,
+    root_namespace_id: rootNs || null,
+    expires_in: expiresIn,
+  };
+}
+
 module.exports = {
   getAccessToken,
+  getBrokerInfo,
   getTeamMemberId,
   getTeamRootNamespace,
   buildHeaders,
