@@ -85,6 +85,11 @@ function encodeSubject(str) {
  */
 function buildHeaderLogoTag(logoBuffer) {
   if (!logoBuffer) {
+    // Shared-module asset — ships with zinn-shared, so every service has it
+    const sharedAssetPath = path.join(__dirname, 'assets', 'logo-email.png');
+    try { logoBuffer = fs.readFileSync(sharedAssetPath); } catch { logoBuffer = null; }
+  }
+  if (!logoBuffer) {
     // Try project-local assets path first (works on Railway too)
     const projectAssetPath = path.join(__dirname, '..', 'assets', 'logo-email.png');
     try { logoBuffer = fs.readFileSync(projectAssetPath); } catch { logoBuffer = null; }
@@ -211,8 +216,13 @@ function buildDocumentEmail(contentHtml, opts = {}) {
  * @returns {{ html: string, logoBuffer: Buffer|null }}
  */
 function buildSignNotificationEmail(opts) {
-  const body = opts.body || 'Thank you for signing your document with ZINN. A copy is attached to this email for your records.';
-  const contentHtml = '<p style="font-family:' + FONT + ';font-size:13px;color:#4e5757;line-height:1.8;">' + body + '</div>';
+  // Callers may pass a full pre-built body as `intro` (greeting, copy, CTA).
+  // Falling back to `body`/default keeps older callers working.
+  const contentHtml = opts.intro
+    ? opts.intro
+    : '<p style="font-family:' + FONT + ';font-size:13px;color:#4e5757;line-height:1.8;">' +
+      (opts.body || 'Thank you for signing your document with ZINN. A copy is attached to this email for your records.') +
+      '</p>';
   return buildDocumentEmail(contentHtml, { recipientName: opts.recipientName });
 }
 
