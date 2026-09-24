@@ -508,77 +508,99 @@ function extractEmails(sectionText) {
   return emails;
 }
 
+// US states/territories (codes + full names) and street words, so a bare
+// "City, ST" line is recognised as an address. The old test only knew FL/GA,
+// so "Daniels, WV" was mistaken for a name and re-inserted as the project
+// address (2026-09-24 York Lake Home bug).
+var US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'];
+
+var US_STATE_NAMES = ['alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'district of columbia', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming'];
+
+var STREET_WORDS = /\b(street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|circle|cir|way|terrace|ter|place|pl|highway|hwy|parkway|pkwy|suite|ste|apt|apartment|unit|trail|trl|loop|run|cove|cv|point|square|sq|plaza|plz|turnpike|tpke|expressway|freeway|route|rte|p\.?o\.?\s*box|po\s*box)\b/i;
+
+/**
+ * True when a Client-section line is an address rather than a person/company
+ * name. Recognises full street addresses, PO boxes, and the bare "City, ST"
+ * form (any US state code or full state name, with optional zip).
+ * @param {string} line
+ * @returns {boolean}
+ */
+function looksLikeAddress(line) {
+  var l = String(line == null ? '' : line).replace(/^[-*•]\s*/, '').trim();
+  if (!l) return false;
+  if (/^\d+\s/.test(l)) return true;                                 // 123 Main St
+  if (/^(p\.?\s*o\.?\s*box|po\s*box)\b/i.test(l)) return true;     // PO Box 12
+  if (STREET_WORDS.test(l)) return true;                             // ... Blvd, Suite 4
+  // City, ST / City, ST 12345 / City ST (state code as the last token)
+  var mState = l.match(/([A-Za-z]{2})\.?(?:\s+\d{5}(?:-\d{4})?)?\s*$/);
+  if (mState && US_STATES.indexOf(mState[1].toUpperCase()) >= 0) return true;
+  // "..., West Virginia" (full state name after a comma)
+  var lower = l.toLowerCase();
+  for (var i = 0; i < US_STATE_NAMES.length; i++) {
+    var nm = US_STATE_NAMES[i];
+    if (lower === nm || lower.slice(-(nm.length + 1)) === ',' + nm || lower.slice(-(nm.length + 2)) === ', ' + nm) return true;
+  }
+  return false;
+}
+
+// Female-first heuristic for multiple clients
+var FEMALE_NAMES = ['Teresa', 'Mary', 'Ann', 'Anne', 'Katherine', 'Elizabeth', 'Sarah', 'Sara', 'Jessica', 'Jennifer', 'Linda', 'Patricia', 'Susan', 'Lisa', 'Nancy', 'Karen', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura', 'Amanda', 'Melissa', 'Deborah', 'Stephanie', 'Rebecca', 'Shirley', 'Cynthia', 'Kathleen', 'Amy', 'Angela', 'Anna', 'Brenda', 'Pamela', 'Emma', 'Nicole', 'Samantha', 'Christine', 'Debra', 'Rachel', 'Carolyn', 'Janet', 'Catherine', 'Maria', 'Heather', 'Diane', 'Ruby', 'Julie', 'Joyce', 'Evelyn', 'Joan', 'Victoria', 'Kelly', 'Christina', 'Lauren', 'Frances', 'Martha', 'Judith', 'Cheryl', 'Megan', 'Andrea', 'Olivia', 'Sophia', 'Isabella', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Abigail', 'Emily', 'Ella', 'Avery', 'Scarlett', 'Grace', 'Chloe', 'Riley', 'Aria', 'Lily', 'Aurora', 'Zoey', 'Nora', 'Camila', 'Penelope', 'Layla', 'Luna', 'Stella', 'Eliana', 'Hannah', 'Maya', 'Naomi', 'Ellie', 'Sadie', 'Aubrey', 'Claire', 'Alice', 'Eva', 'Hailey', 'Kaylee', 'Alyssa', 'Brianna', 'Julia', 'Kassia', 'Lindsay', 'Robin', 'Shukry', 'Shireen', 'Taylor', 'Casey'];
+
 /**
  * Build a client greeting from the ## Client section.
- * Female first, then males/unknowns, joined with "and".
+ *
+ * Client-section format (AGENTS.md): person name(s) are ALWAYS one line;
+ * a company client puts the company on line 1 and the people on an
+ * "attention:" line. This reads ONLY that line -- never the address, the
+ * project address, emails, or phones. Female first, joined with "and".
  * @param {string} clientSection - Raw ## Client content
  * @returns {string} Greeting like "Hello Mary and Marc,"
  */
 function buildClientGreeting(clientSection) {
   if (!clientSection) return 'Hello,';
 
-  // Collect ALL non-email, non-phone lines (multiple clients on separate lines)
-  const allLines = clientSection.split('\n')
-    .map(l => l.replace(/^[-*•]\s*/, '').trim())
-    .filter(Boolean);
-
-  // Filter out emails, phone numbers (formatted AND bare digit runs),
-  // addresses, URLs, and dashes. Uses the shared phone module for the
-  // platform-wide standard so no phone format can leak into a greeting.
   const phone = require('./phone');
-  const nameLines = allLines.filter(l =>
-    !/@/.test(l) &&
-    !phone.isPhone(l) &&
-    !/^(https?:\/\/)/i.test(l) &&
-    !/^[-]{2,}$/.test(l.trim()) &&
-    !/^\d+\s/.test(l) && // street addresses start with a number
-    !/\b(street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|circle|cir|way|terrace|ter|place|pl|highway|hwy|p\.?o\.?\s*box)\b/i.test(l) // address keywords
-  );
+  const lines = clientSection.split('\n')
+    .map(l => l.replace(/^[-*•]\s*/, '').trim())
+    .filter(Boolean)
+    .filter(l => !/^[-_*~]{2,}$/.test(l)); // drop markdown hr / --- separators
+  if (lines.length === 0) return 'Hello,';
 
-  if (nameLines.length === 0) return 'Hello,';
-
-  // Check for an attention: line (company client)
-  const attentionLine = nameLines.find(l => /^attention:/i.test(l) || /^attn:/i.test(l));
-  if (attentionLine) {
-    const match = attentionLine.match(/:(.+)/);
-    if (match) {
-      const firstName = match[1].trim().split(' ')[0];
-      return 'Hello ' + firstName + ',';
+  // A company client names the people on the "attention:" line.
+  const attnIdx = lines.findIndex(l => /^attention\s*:/i.test(l) || /^attn\s*:/i.test(l));
+  const isJunk = l => /@/.test(l) || phone.isPhone(l) || /^(https?:\/\/)/i.test(l);
+  let nameLine;
+  if (attnIdx >= 0) {
+    const m = lines[attnIdx].match(/:(.+)$/);
+    nameLine = m ? m[1].trim() : '';
+  } else {
+    // Person client: names are line 1. Fall through only when line 1 is
+    // obviously not a name line (legacy/malformed card).
+    nameLine = lines[0];
+    if (isJunk(nameLine)) {
+      nameLine = lines.find(l => !isJunk(l) && !looksLikeAddress(l)) || '';
     }
   }
 
-  // Remove company inc/suffixes from name lines
-  const cleaned = nameLines.map(l => l.replace(/,\s*(Inc\.?|LLC|PLLC|PA|Corp\.?|Company|Ltd\.?).*/i, '').trim()).filter(Boolean);
+  // Drop any stray company suffix the parser left on the name line.
+  nameLine = nameLine.replace(/,\s*(Inc\.?|LLC|PLLC|PA|Corp\.?|Company|Ltd\.?).*/i, '').trim();
+  if (!nameLine) return 'Hello,';
 
-  if (cleaned.length === 0) return 'Hello,';
+  // One line may hold several people: "Ann and Marc", "Ann, Marc", "Ann & Marc".
+  const people = nameLine.split(/\s+and\s+|\s*&\s*|\s*,\s*/i).map(s => s.trim()).filter(Boolean);
 
-  // Expand "X and Y Lastname" lines into separate names
-  const expanded = [];
-  for (const name of cleaned) {
-    if (/\s+and\s+/i.test(name)) {
-      const parts = name.split(/\s+and\s+/i);
-      for (const part of parts) {
-        expanded.push(part.trim());
-      }
-    } else {
-      expanded.push(name);
-    }
-  }
-
-  // Female-first heuristic for multiple clients
-  var femaleNames = ['Teresa', 'Mary', 'Ann', 'Anne', 'Katherine', 'Elizabeth', 'Sarah', 'Sara', 'Jessica', 'Jennifer', 'Linda', 'Patricia', 'Susan', 'Lisa', 'Nancy', 'Karen', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura', 'Amanda', 'Melissa', 'Deborah', 'Stephanie', 'Rebecca', 'Shirley', 'Cynthia', 'Kathleen', 'Amy', 'Angela', 'Anna', 'Brenda', 'Pamela', 'Emma', 'Nicole', 'Samantha', 'Katherine', 'Christine', 'Debra', 'Rachel', 'Carolyn', 'Janet', 'Catherine', 'Maria', 'Heather', 'Diane', 'Ruby', 'Julie', 'Joyce', 'Evelyn', 'Joan', 'Victoria', 'Kelly', 'Christina', 'Lauren', 'Frances', 'Martha', 'Judith', 'Cheryl', 'Megan', 'Andrea', 'Olivia', 'Sophia', 'Isabella', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Ella', 'Avery', 'Scarlett', 'Grace', 'Chloe', 'Victoria', 'Riley', 'Aria', 'Lily', 'Aurora', 'Zoey', 'Nora', 'Camila', 'Penelope', 'Layla', 'Luna', 'Stella', 'Eliana', 'Hannah', 'Maya', 'Naomi', 'Ellie', 'Sadie', 'Aubrey', 'Claire', 'Alice', 'Eva', 'Hailey', 'Kaylee', 'Alyssa', 'Brianna', 'Julia', 'Kassia', 'Lindsay', 'Robin', 'Shukry', 'Shireen', 'Taylor', 'Casey'];
-
-  // Extract first names
-  const firstNames = expanded.map(function(l) {
-    return l.trim().split(' ')[0];
+  // First name of each person, stripped of any trailing punctuation
+  // (the old split(' ')[0] kept a comma: "Daniels, WV" -> "Daniels,").
+  const firstNames = people.map(function(p) {
+    return p.split(/\s+/)[0].replace(/[^\p{L}\p{N}'-]/gu, '');
   }).filter(Boolean);
 
   if (firstNames.length === 0) return 'Hello,';
   if (firstNames.length === 1) return 'Hello ' + firstNames[0] + ',';
 
   var sorted = [].concat(firstNames).sort(function(a, b) {
-    var aF = femaleNames.indexOf(a) >= 0 ? 0 : 1;
-    var bF = femaleNames.indexOf(b) >= 0 ? 0 : 1;
+    var aF = FEMALE_NAMES.indexOf(a) >= 0 ? 0 : 1;
+    var bF = FEMALE_NAMES.indexOf(b) >= 0 ? 0 : 1;
     return aF - bF;
   });
 
@@ -697,6 +719,7 @@ module.exports = {
   parseSections,
   getSection,
   extractEmails,
+  looksLikeAddress,
   buildClientGreeting,
   parseFeeLines,
 };
