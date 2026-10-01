@@ -38,6 +38,14 @@ const BROKER_GUARD = process.env.QBO_BROKER_TOKEN || '';
 // Access tokens live ~60 min. Treat a cached one as usable until 60s before expiry.
 const ACCESS_SKEW_MS = 60 * 1000;
 
+// Single-flight renewal (2026-10-01, SRM best practice). Intuit replaces the
+// refresh token value when it is used, so two renewals running at the same time
+// can leave one holder using a value Intuit has already retired - the number
+// two cause of invalid_grant in the field. Every renewal in this process shares
+// one in-flight exchange, keyed by the refresh token being sent, so the same
+// (possibly already rotated) value is never sent twice at once.
+let inflightRefresh = null;
+
 function loadBorrowConfig() {
   try {
     if (fs.existsSync(BORROW_FILE)) return JSON.parse(fs.readFileSync(BORROW_FILE, 'utf8'));
@@ -184,15 +192,25 @@ class QBOClient {
       if (res.realm_id) t.realm_id = res.realm_id;
       return t;
     }
-    // Durable copy first (added 2026-09-20): a re-authorised token lands in the
-    // DB and is seen by every consumer of this service, instead of being lost
-    // when the env seed goes stale. A stored row superseded by a later
-    // re-authorisation would wedge the service, so a rejected stored token
-    // falls back to the env token and re-persists.
+    // Newest copy wins (2026-10-01): after a rotation, the only value Intuit
+    // still honours is the one this service itself last wrote to
+    // QBO_TOKEN_FILE. Re-read it on EVERY renewal so a long-lived client can
+    // never stay pinned to a value Intuit has since replaced - the cause of the
+    // 2026-10-01 outage, where the broker kept serving a token it read at
+    // startup while the volume copy had moved on.
+    try {
+      if (fs.existsSync(TOKEN_FILE)) {
+        const saved = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+        if (saved.refresh_token) t.refresh_token = saved.refresh_token;
+      }
+    } catch (e) { /* keep whatever was already loaded */ }
+
+    // Durable DB copy (added 2026-09-20) is the second-newest: it is written on
+    // the same renewals as the file, so it is only a fallback.
     if (tokenStore) {
       try {
         const row = await tokenStore.getStoredToken(QBO_TOKEN_SERVICE, 'refresh');
-        if (row && row.value) t.refresh_token = row.value;
+        if (row && row.value && !fs.existsSync(TOKEN_FILE)) t.refresh_token = row.value;
       } catch (e) { /* no stored copy - keep the env/file token */ }
     }
 
@@ -210,7 +228,7 @@ class QBOClient {
       clientSecret = creds.clientSecret;
     }
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-    const request = (refreshToken) => httpReq(TOKEN_URL, {
+    const doRequest = (refreshToken) => httpReq(TOKEN_URL, {
       method: 'POST',
       headers: {
         Authorization: 'Basic ' + auth,
@@ -218,6 +236,16 @@ class QBOClient {
         Accept: 'application/json',
       },
     }, new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }).toString());
+
+    // One exchange at a time per refresh-token value (see inflightRefresh above).
+    const request = (refreshToken) => {
+      if (inflightRefresh && inflightRefresh.token === refreshToken) return inflightRefresh.promise;
+      const promise = doRequest(refreshToken).finally(() => {
+        if (inflightRefresh && inflightRefresh.token === refreshToken) inflightRefresh = null;
+      });
+      inflightRefresh = { token: refreshToken, promise };
+      return promise;
+    };
 
     let res;
     try {
