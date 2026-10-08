@@ -1,0 +1,315 @@
+[
+  {
+    "cardId": "6a1228d138b2bef3bc662adc",
+    "cardName": "Howell Renovation",
+    "harvestProjectIds": [
+      "48593958"
+    ],
+    "hours": 23.5,
+    "manual": false
+  },
+  {
+    "cardId": "6a1de54d36869e58e490a5e2",
+    "cardName": "Willett Restaurant - Schematic Design",
+    "harvestProjectIds": [
+      "28058906",
+      "28059052",
+      "28059055",
+      "28059059"
+    ],
+    "hours": 501.58,
+    "manual": true
+  },
+  {
+    "cardId": "69e7ef9535f6e7282547a74c",
+    "cardName": "Craig Field Planning",
+    "harvestProjectIds": [
+      "48213095"
+    ],
+    "hours": 7,
+    "manual": false
+  },
+  {
+    "cardId": "69a1dc7a0e64b6cc66b4e11a",
+    "cardName": "Saint Pauls Site Planning",
+    "harvestProjectIds": [
+      "48211606"
+    ],
+    "hours": 32,
+    "manual": false
+  },
+  {
+    "cardId": "697cb1aaf896ab0a2ae87fc5",
+    "cardName": "Vo Residence",
+    "harvestProjectIds": [
+      "47887341"
+    ],
+    "hours": 18.25,
+    "manual": false
+  },
+  {
+    "cardId": "692577c69e74923c0208707a",
+    "cardName": "Peace ADU",
+    "harvestProjectIds": [
+      "48538969"
+    ],
+    "hours": 21.5,
+    "manual": false
+  },
+  {
+    "cardId": "69309a7202b091c2cde0379f",
+    "cardName": "Crum Residence",
+    "harvestProjectIds": [
+      "46811623"
+    ],
+    "hours": 164.25,
+    "manual": false
+  },
+  {
+    "cardId": "68b9b32089e21fd9d366e244",
+    "cardName": "Maloney Castellaneta Renovation",
+    "harvestProjectIds": [
+      "46145473",
+      "46395953"
+    ],
+    "hours": 223.75,
+    "manual": false
+  },
+  {
+    "cardId": "699c7c4fd1ac63ce07fa7420",
+    "cardName": "Spinner Residence - Guest Addition",
+    "harvestProjectIds": [
+      "48039325"
+    ],
+    "hours": 26,
+    "manual": false
+  },
+  {
+    "cardId": "69e8f5cf55feffcc3ba9ce14",
+    "cardName": "760 South Loop Parkway",
+    "harvestProjectIds": [
+      "48202347"
+    ],
+    "hours": 26.25,
+    "manual": false
+  },
+  {
+    "cardId": "693adb12bff7cb7d641a8894",
+    "cardName": "7807 Baymeadows",
+    "harvestProjectIds": [
+      "47102534"
+    ],
+    "hours": 54,
+    "manual": false
+  },
+  {
+    "cardId": "655baa861913d44f976af6cf",
+    "cardName": "Alvarado Reno",
+    "harvestProjectIds": [
+      "39837516",
+      "44558032"
+    ],
+    "hours": 1145.25,
+    "manual": false
+  },
+  {
+    "cardId": "69eba97bd528ec8c960c35ad",
+    "cardName": "Happy Medium Books",
+    "harvestProjectIds": [
+      "48238342"
+    ],
+    "hours": 79.75,
+    "manual": false
+  },
+  {
+    "cardId": "69a5bc63becc6aee98dc8f60",
+    "cardName": "Jaxgreen Port Jax Buildings 1100 and 1200",
+    "harvestProjectIds": [
+      "47569891"
+    ],
+    "hours": 113.75,
+    "manual": false
+  },
+  {
+    "cardId": "688bd706b337fb872e720582",
+    "cardName": "Hasley Renovation",
+    "harvestProjectIds": [
+      "46327406"
+    ],
+    "hours": 278,
+    "manual": false
+  },
+  {
+    "cardId": "68f7d016356be61ac10a54c4",
+    "cardName": "Munday Porch Addition",
+    "harvestProjectIds": [
+      "46296937"
+    ],
+    "hours": 26.5,
+    "manual": false
+  },
+  {
+    "cardId": "64232b3186bdc54da27629e4",
+    "cardName": "Russo Reno",
+    "harvestProjectIds": [
+      "38284761",
+      "46024447"
+    ],
+    "hours": 1303.58,
+    "manual": false
+  },
+  {
+    "cardId": "687d5a4dcbc87725338598ae",
+    "cardName": "Langowski Interiors",
+    "harvestProjectIds": [
+      "45658730"
+    ],
+    "hours": 258,
+    "manual": false
+  },
+  {
+    "cardId": "67aa1dc9cbe6b69cd8d331d9",
+    "cardName": "Moreno - Construction Administration",
+    "harvestProjectIds": [
+      "43667140"
+    ],
+    "hours": 345.59,
+    "manual": false
+  },
+  {
+    "cardId": "62b677ad79131a413cd754c7",
+    "cardName": "Mead Bechtel",
+    "harvestProjectIds": [
+      "38284766"
+    ],
+    "hours": 194,
+    "manual": false
+  },
+  {
+    "cardId": "63e280a74eb1e7e9e0c62002",
+    "cardName": "Meck Residence",
+    "harvestProjectIds": [
+      "38284576",
+      "45216372"
+    ],
+    "hours": 1522.75,
+    "manual": false
+  },
+  {
+    "cardId": "6797ed888df498f061c5be82",
+    "cardName": "Bolles Soccer Team Locker Rooms",
+    "harvestProjectIds": [
+      "43723645"
+    ],
+    "hours": 269.75,
+    "manual": false
+  },
+  {
+    "cardId": "67cf56a0d2563144575eb9b0",
+    "cardName": "Sumner Reno Predesign",
+    "harvestProjectIds": [
+      "48179192"
+    ],
+    "hours": 0.5,
+    "manual": false
+  },
+  {
+    "cardId": "6a397e55c38bb62b832fa803",
+    "cardName": "Wright Accessory Structure",
+    "harvestProjectIds": [
+      "48583980"
+    ],
+    "hours": 7.75,
+    "manual": false
+  },
+  {
+    "cardId": "69fe0d67ab0ee76b4f2d8c39",
+    "cardName": "Picon Renovation Pre Design",
+    "harvestProjectIds": [
+      "48598241"
+    ],
+    "hours": 2,
+    "manual": false
+  },
+  {
+    "cardId": "6a4e9ba6db0c752193fb4ec2",
+    "cardName": "Fricano Interiors",
+    "harvestProjectIds": [
+      "48871708"
+    ],
+    "hours": 20.25,
+    "manual": false
+  },
+  {
+    "cardId": "69efb10e93cc533b1db94568",
+    "cardName": "3285 University Clubhouse",
+    "harvestProjectIds": [
+      "48668996"
+    ],
+    "hours": 0.25,
+    "manual": false
+  },
+  {
+    "cardId": "6a26e16a90fd07f66d94242d",
+    "cardName": "Farmand Pool House",
+    "harvestProjectIds": [
+      "48597557"
+    ],
+    "hours": 11.25,
+    "manual": false
+  },
+  {
+    "cardId": "6801588c34dc68f56287b6ee",
+    "cardName": "Germaine Reno",
+    "harvestProjectIds": [
+      "44677820"
+    ],
+    "hours": 198.5,
+    "manual": false
+  },
+  {
+    "cardId": "6734cf18ff6181c76cc112cb",
+    "cardName": "Met Park",
+    "harvestProjectIds": [
+      "44452154"
+    ],
+    "hours": 370.16,
+    "manual": false
+  },
+  {
+    "cardId": "68ffa906b7368715c561224d",
+    "cardName": "Allen Residence New Build",
+    "harvestProjectIds": [
+      "47559101"
+    ],
+    "hours": 295,
+    "manual": false
+  },
+  {
+    "cardId": "696a60ba8c7540f137a0648b",
+    "cardName": "Faith Outreach Church Renovation",
+    "harvestProjectIds": [
+      "47458713"
+    ],
+    "hours": 174.5,
+    "manual": false
+  },
+  {
+    "cardId": "65a5452d84018164606416db",
+    "cardName": "Yang Reno",
+    "harvestProjectIds": [
+      "40092625"
+    ],
+    "hours": 938,
+    "manual": false
+  },
+  {
+    "cardId": "6a1da16e1d0a43ff79113021",
+    "cardName": "Yang Reno Value Engineering Updates",
+    "harvestProjectIds": [
+      "48541049"
+    ],
+    "hours": 25,
+    "manual": false
+  }
+]
