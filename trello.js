@@ -531,8 +531,11 @@ function looksLikeAddress(line) {
   if (/^\d+\s/.test(l)) return true;                                 // 123 Main St
   if (/^(p\.?\s*o\.?\s*box|po\s*box)\b/i.test(l)) return true;     // PO Box 12
   if (STREET_WORDS.test(l)) return true;                             // ... Blvd, Suite 4
-  // City, ST / City, ST 12345 / City ST (state code as the last token)
-  var mState = l.match(/([A-Za-z]{2})\.?(?:\s+\d{5}(?:-\d{4})?)?\s*$/);
+  // City, ST / City, ST 12345 / City ST (state code as the last token).
+  // The code must be its own token (preceded by start/space/comma) so a word
+  // ending in a state pair (e.g. "Industrial" -> "AL", "Calvin" -> "IN") is
+  // not mistaken for an address.
+  var mState = l.match(/(?:^|[\s,])([A-Za-z]{2})\.?(?:\s+\d{5}(?:-\d{4})?)?\s*$/);
   if (mState && US_STATES.indexOf(mState[1].toUpperCase()) >= 0) return true;
   // "..., West Virginia" (full state name after a comma)
   var lower = l.toLowerCase();
