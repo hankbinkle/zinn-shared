@@ -353,7 +353,10 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
       continue;
     }
     var sl = addedItems[i].item.zptCard.shortLink;
-    var rawHours = hoursMap[sl] || 0;
+    // Blank or zero hours means one hour of work, not "no schedule". Every
+    // task in the chain gets a slot so dates follow board order.
+    var rawHours = hoursMap[sl];
+    if (!(rawHours > 0)) rawHours = 1;
     var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt);
     hoursList.push({ shortLink: sl, hours: adjHours });
   }
