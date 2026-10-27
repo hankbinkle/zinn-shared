@@ -356,8 +356,11 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
     // Blank or zero hours means one hour of work, not "no schedule". Every
     // task in the chain gets a slot so dates follow board order.
     var rawHours = hoursMap[sl];
-    if (!(rawHours > 0)) rawHours = 1;
+    var blankHours = !(rawHours > 0);
+    if (blankHours) rawHours = 1;
     var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt);
+    if (blankHours && adjHours < 1) adjHours = 1;  // blank = one hour, never scaled to zero
+    if (!(adjHours > 0)) adjHours = 0.5;
     hoursList.push({ shortLink: sl, hours: adjHours });
   }
 
