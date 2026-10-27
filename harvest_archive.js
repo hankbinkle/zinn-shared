@@ -45,6 +45,23 @@ function load() {
 
 function cardId(card) { return typeof card === 'string' ? card : (card && card.id); }
 
+/**
+ * Creation date of a Trello card, from the first 8 hex chars of its id (a
+ * Mongo-style ObjectId: 4-byte unix seconds). Returns "YYYY-MM-DD" or null.
+ *
+ * Guard (Rob 2026-10-27): archived Harvest time can never belong to work done
+ * before the card itself existed. New projects that reuse an old client's name
+ * (e.g. Willett Restaurant - Schematic Design vs the 2021 Willett Event Space)
+ * would otherwise inherit the whole historical client total.
+ */
+function cardCreated(card) {
+  var id = cardId(card);
+  if (!id || !/^[0-9a-f]{24}$/i.test(id)) return null;
+  var secs = parseInt(id.slice(0, 8), 16);
+  if (!secs || !isFinite(secs)) return null;
+  return new Date(secs * 1000).toISOString().slice(0, 10);
+}
+
 function mapEntry(card) {
   load();
   const id = cardId(card);
@@ -53,15 +70,20 @@ function mapEntry(card) {
   return null;
 }
 
-/** Raw historical entries for a card, or [] when it has none. */
+/** Raw historical entries for a card (dated on/after the card was created),
+ *  or [] when it has none. */
 function entriesForCard(card) {
   load();
   var m = mapEntry(card);
   if (!m) return [];
+  var created = cardCreated(card);
   var out = [];
   (m.harvestProjectIds || []).forEach(function (pid) {
     var p = _arch.projects[pid];
-    if (p && p.entries) p.entries.forEach(function (e) { out.push(e); });
+    if (p && p.entries) p.entries.forEach(function (e) {
+      if (created && String(e.d || '') < created) return; // predates this card
+      out.push(e);
+    });
   });
   return out;
 }
@@ -145,4 +167,4 @@ function serviceFor(entry) {
   return 'Errors/Corrections';
 }
 
-module.exports = { entriesForCard, selectForCard, hoursForCard, dollarsForCard, phaseTag, serviceFor, mapEntry, CUTOVER, VERSION };
+module.exports = { entriesForCard, selectForCard, hoursForCard, dollarsForCard, phaseTag, serviceFor, mapEntry, cardCreated, CUTOVER, VERSION };

@@ -9,8 +9,8 @@
     "manual": false
   },
   {
-    "cardId": "6a1de54d36869e58e490a5e2",
-    "cardName": "Willett Restaurant - Schematic Design",
+    "cardId": "5ff33f5fb8d06054ce074ca8",
+    "cardName": "Willett Event Space",
     "harvestProjectIds": [
       "28058906",
       "28059052",
@@ -18,7 +18,8 @@
       "28059059"
     ],
     "hours": 501.58,
-    "manual": true
+    "manual": false,
+    "archived": true
   },
   {
     "cardId": "69e7ef9535f6e7282547a74c",
