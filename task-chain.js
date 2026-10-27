@@ -359,8 +359,7 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
     var blankHours = !(rawHours > 0);
     if (blankHours) rawHours = 1;
     var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt);
-    if (blankHours && adjHours < 1) adjHours = 1;  // blank = one hour, never scaled to zero
-    if (!(adjHours > 0)) adjHours = 0.5;
+    if (adjHours < 1) adjHours = 1;  // one hour minimum for every task
     hoursList.push({ shortLink: sl, hours: adjHours });
   }
 
