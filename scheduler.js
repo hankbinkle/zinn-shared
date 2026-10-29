@@ -31,17 +31,41 @@ function parseAreaSqFt(areaText) {
 
 var BENCHMARK_SQFT = 2000;
 
+// Warehouse projects carry large square footage that is quick to draw. Their
+// area-scaled hours are reduced by 75% (a quarter of the scaled value).
+var WAREHOUSE_HOURS_FACTOR = 0.25;
+
 /**
  * Scale template hours by project size relative to the 2000 sq ft benchmark.
- * Rounds to the nearest half hour.
+ * Rounds to the nearest half hour. Warehouse projects apply their reduction
+ * on top of the area scaling.
  * @param {number} templateHours - Hours from ZPTB template card
  * @param {number} projectSqFt - Square footage from project card
+ * @param {boolean} [isWarehouse] - Project carries the "warehouse" label
  * @returns {number} Scaled hours
  */
-function calcAdjustedHours(templateHours, projectSqFt) {
-  if (!projectSqFt || projectSqFt <= 0) return templateHours;
-  var raw = templateHours * (projectSqFt / BENCHMARK_SQFT);
-  return Math.round(raw * 2) / 2;
+function calcAdjustedHours(templateHours, projectSqFt, isWarehouse) {
+  var hours = templateHours;
+  if (projectSqFt && projectSqFt > 0) {
+    hours = templateHours * (projectSqFt / BENCHMARK_SQFT);
+  }
+  if (isWarehouse) hours = hours * WAREHOUSE_HOURS_FACTOR;
+  return Math.round(hours * 2) / 2;
+}
+
+/**
+ * True when the card carries a label named "warehouse" (case-insensitive).
+ * Accepts a full Trello card with `labels`, or an array of labels.
+ * @param {object|Array} cardOrLabels
+ * @returns {boolean}
+ */
+function hasWarehouseLabel(cardOrLabels) {
+  var labels = Array.isArray(cardOrLabels)
+    ? cardOrLabels
+    : (cardOrLabels && Array.isArray(cardOrLabels.labels) ? cardOrLabels.labels : []);
+  return labels.some(function (l) {
+    return l && typeof l.name === 'string' && l.name.trim().toLowerCase() === 'warehouse';
+  });
 }
 
 // ===== Eastern Time Helpers ================================================
@@ -246,6 +270,8 @@ function buildDurationMarkdown(scaledHours) {
 module.exports = {
   parseAreaSqFt: parseAreaSqFt,
   calcAdjustedHours: calcAdjustedHours,
+  hasWarehouseLabel: hasWarehouseLabel,
+  WAREHOUSE_HOURS_FACTOR: WAREHOUSE_HOURS_FACTOR,
   nextBusinessDay9am: nextBusinessDay9am,
   addBusinessHours: addBusinessHours,
   calculateSchedule: calculateSchedule,

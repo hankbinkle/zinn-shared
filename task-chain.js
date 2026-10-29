@@ -343,7 +343,7 @@ async function fetchHoursForChain(taskChain) {
  * Apply scheduling to newly added checkitems: set due dates and update names
  * with hidden start date markdown for board-visualizer compatibility.
  */
-async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
+async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt, isWarehouse) {
   if (!addedItems || addedItems.length === 0) return;
 
   var hoursList = [];
@@ -358,7 +358,7 @@ async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt) {
     var rawHours = hoursMap[sl];
     var blankHours = !(rawHours > 0);
     if (blankHours) rawHours = 1;
-    var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt);
+    var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt, isWarehouse);
     if (adjHours < 1) adjHours = 1;  // one hour minimum for every task
     hoursList.push({ shortLink: sl, hours: adjHours });
   }
@@ -457,6 +457,13 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     console.log('[task-chain] Project sq ft: ' + projectSqFt);
   }
 
+  var isWarehouse = scheduler.hasWarehouseLabel(card);
+  if (!isWarehouse && card && card.id && !Array.isArray(card.labels)) {
+    // Webhook card payloads can arrive without labels; fetch them once.
+    try { isWarehouse = scheduler.hasWarehouseLabel(await trello.getCard(card.id)); } catch (e) {}
+  }
+  if (isWarehouse) console.log('[task-chain] Warehouse label: hours scaled to 25%');
+
   // --- Ensure main Checklist + Checklist Archive exist ---
   var { main, archive } = await ensureCardChecklists(card.id);
   var checklistId = main.id;
@@ -525,7 +532,7 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   // Restored items keep their existing name (follow-up counters, renamed
   // titles); only the hidden start-date marker and due date are refreshed.
   // Completed restored items stay untouched (work already done).
-  await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt);
+  await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt, isWarehouse);
 
   // All newly added items remain unchecked. Humans check items as work is completed.
 
