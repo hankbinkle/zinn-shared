@@ -4,7 +4,13 @@
 // =============================================================================
 'use strict';
 
-const fetch = require('node-fetch');
+const nodeFetch = require('node-fetch');
+// node-fetch v2 exports a function; v3 is an ESM module whose default is the
+// function. Fall back to the runtime's native fetch when neither shape exists,
+// so local Mac scripts and Railway containers both resolve a callable fetch.
+const fetch = typeof nodeFetch === 'function'
+  ? nodeFetch
+  : (typeof nodeFetch.default === 'function' ? nodeFetch.default : globalThis.fetch);
 const https = require('https');
 const { TRELLO_KEY, TRELLO_TOKEN } = require('./config');
 
