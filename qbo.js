@@ -530,21 +530,30 @@ class QBOClient {
     return res.Employee;
   }
 
-  // Sparse update of a TimeActivity (e.g. staff correction of hours).
-  // Requires Id + SyncToken (fetch the entry first for a fresh token).
-  async updateTimeActivity({ id, syncToken, hours, description }) {
-    const h = Number(hours);
-    const whole = Math.floor(h);
-    const mins = Math.round((h - whole) * 60);
-    const body = JSON.stringify({
-      Id: String(id),
-      SyncToken: syncToken,
-      Hours: whole,
-      Minutes: mins,
-      sparse: true,
-      ...(description ? { Description: description } : {}),
-    });
-    const res = await this.api('timeactivity', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
+  // Sparse update of a TimeActivity (staff correction of hours, or a billing
+  // flag change after posting). Requires Id + SyncToken (fetch the entry first
+  // for a fresh token, or reuse the one returned by the previous update).
+  // Only the fields passed are sent, so a billing flip never touches hours.
+  // TxnDate/EmployeeRef/CustomerRef/ItemRef are optional and, when supplied,
+  // written back exactly as read: QuickBooks resets an omitted TxnDate to today
+  // on a TimeActivity update (verified 2026-11-07), so a billing-only change
+  // must echo the original date.
+  async updateTimeActivity({ id, syncToken, hours, description, billableStatus, txnDate, employeeId, customerId, itemId, nameOf }) {
+    const body = { Id: String(id), SyncToken: syncToken, sparse: true };
+    if (hours != null && hours !== '') {
+      const h = Number(hours);
+      const whole = Math.floor(h);
+      body.Hours = whole;
+      body.Minutes = Math.round((h - whole) * 60);
+    }
+    if (description) body.Description = description;
+    if (billableStatus) body.BillableStatus = String(billableStatus);
+    if (txnDate) body.TxnDate = String(txnDate);
+    if (employeeId) body.EmployeeRef = { value: String(employeeId) };
+    if (customerId) body.CustomerRef = { value: String(customerId) };
+    if (itemId) body.ItemRef = { value: String(itemId) };
+    if (nameOf) body.NameOf = String(nameOf);
+    const res = await this.api('timeactivity', { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
     return res.TimeActivity;
   }
 
