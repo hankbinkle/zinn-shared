@@ -308,6 +308,28 @@ async function getCardZptItemsInOrder(cardId) {
  * Fetch the "hours" Trello custom field value for each ZPTB card in the chain.
  * Returns a map: shortLink -> hours (number). Skips cards with no hours set.
  */
+
+// First interval from a template card's follow_up config ("7, 7, 14, 28" -> 7).
+function firstFollowUpDays(desc) {
+  var m = String(desc || '').match(/follow_up\s*:\s*([0-9][^\n]*)/i);
+  if (!m) return null;
+  var first = parseInt(m[1], 10);
+  return (first > 0) ? first : null;
+}
+
+// True when this template card is a waiting item: no hours of its own and a
+// follow_up sequence, meaning the client or a vendor has to act next.
+function isWaitingItem(meta) {
+  return !!meta && !(meta.hours > 0) && !!meta.followUp;
+}
+
+// True when the item after a booking gate needs lead time before it happens
+// (a meeting, a call, a site or showroom visit).
+function needsBookingLead(prevGateName, name) {
+  return !!prevGateName && /booked|scheduled/i.test(prevGateName) &&
+    /meeting|call|visit|survey/i.test(name || '');
+}
+
 async function fetchHoursForChain(taskChain) {
   var cfs = await trello.getBoardCustomFields(ZPT_BOARD_ID);
   var hoursDef = null;
@@ -340,27 +362,83 @@ async function fetchHoursForChain(taskChain) {
 }
 
 /**
+ * Fetch hours and follow-up config for every card in the chain in one board
+ * request, instead of one request per card.
+ * @returns {Object} shortLink -> { name, hours, followUp }
+ */
+async function fetchChainMeta(taskChain) {
+  var meta = {};
+  var bySl = {};
+  try {
+    var cfs = await trello.getBoardCustomFields(ZPT_BOARD_ID);
+    var hoursId = null;
+    for (var ci = 0; ci < cfs.length; ci++) {
+      if (cfs[ci].name.toLowerCase() === 'hours') hoursId = cfs[ci].id;
+    }
+    var cards = await trello.trelloGet('/boards/' + ZPT_BOARD_ID +
+      '/cards?fields=name,desc,shortLink&customFieldItems=true');
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      var h = 0;
+      var items = c.customFieldItems || [];
+      for (var j = 0; j < items.length; j++) {
+        if (items[j].idCustomField === hoursId && items[j].value) {
+          var hv = (items[j].value.number !== undefined) ? items[j].value.number : items[j].value.text;
+          var hn = parseFloat(hv);
+          if (hn > 0) h = hn;
+        }
+      }
+      bySl[c.shortLink] = { name: c.name, hours: h, followUp: firstFollowUpDays(c.desc) };
+    }
+  } catch (e) {
+    console.log('[task-chain] Bulk template fetch failed (' + e.message + ') — falling back to per-card');
+  }
+  for (var k = 0; k < taskChain.length; k++) {
+    var sl = taskChain[k].zptCard.shortLink;
+    meta[sl] = bySl[sl] || {
+      name: taskChain[k].zptCard.name,
+      hours: 0,
+      followUp: null,
+    };
+  }
+  return meta;
+}
+
+/**
  * Apply scheduling to newly added checkitems: set due dates and update names
  * with hidden start date markdown for board-visualizer compatibility.
  */
-async function applyScheduleToItems(cardId, addedItems, hoursMap, projectSqFt, isWarehouse) {
+async function applyScheduleToItems(cardId, addedItems, meta, projectSqFt, projectType) {
   if (!addedItems || addedItems.length === 0) return;
 
   var hoursList = [];
+  var prevGateName = null;
   for (var i = 0; i < addedItems.length; i++) {
-    if (!addedItems[i]) {
-      hoursList.push({ shortLink: null, hours: 0 });
+    var zc = addedItems[i].item.zptCard;
+    var sl = zc.shortLink;
+    var info = meta[sl] || { name: zc.name, hours: 0, followUp: null };
+
+    // A waiting item takes no working slot: it holds the chain for its first
+    // follow-up interval, and its due date is the deadline the client or
+    // vendor has to meet.
+    if (isWaitingItem(info)) {
+      var wait = info.followUp || scheduler.DEFAULT_WAIT_DAYS;
+      hoursList.push({ shortLink: sl, hours: 0, waitDays: wait, waitTo: 'end', marker: 1 });
+      prevGateName = info.name;
       continue;
     }
-    var sl = addedItems[i].item.zptCard.shortLink;
+
     // Blank or zero hours means one hour of work, not "no schedule". Every
     // task in the chain gets a slot so dates follow board order.
-    var rawHours = hoursMap[sl];
-    var blankHours = !(rawHours > 0);
-    if (blankHours) rawHours = 1;
-    var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt, isWarehouse);
+    var rawHours = (info.hours > 0) ? info.hours : 1;
+    var adjHours = scheduler.calcAdjustedHours(rawHours, projectSqFt, projectType);
     if (adjHours < 1) adjHours = 1;  // one hour minimum for every task
-    hoursList.push({ shortLink: sl, hours: adjHours });
+
+    // A meeting, call or visit that follows a booking gate cannot happen the
+    // day the client is asked to book it, so it gets lead time.
+    var lead = needsBookingLead(prevGateName, info.name) ? scheduler.BOOKING_LEAD_DAYS : 0;
+    hoursList.push({ shortLink: sl, hours: adjHours, waitDays: lead, waitTo: 'start' });
+    prevGateName = null;
   }
 
   var schedule = scheduler.calculateSchedule(hoursList, new Date());
@@ -442,7 +520,7 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   var restored = 0;
 
   // --- Fetch hours from ZPTB template cards ---
-  var hoursMap = await fetchHoursForChain(taskChain);
+  var meta = await fetchChainMeta(taskChain);
 
   // --- Parse project area for hours scaling ---
   var projectSqFt = null;
@@ -451,18 +529,18 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
     projectSqFt = scheduler.parseAreaSqFt(areaText);
   }
   if (!projectSqFt) {
-    projectSqFt = scheduler.BENCHMARK_SQFT;
-    console.log('[task-chain] No ## Area on "' + card.name + '" — defaulting to ' + projectSqFt + ' sq ft');
+    console.log('[task-chain] No ## Area on "' + card.name + '" — template hours unchanged');
   } else {
     console.log('[task-chain] Project sq ft: ' + projectSqFt);
   }
 
-  var isWarehouse = scheduler.hasWarehouseLabel(card);
-  if (!isWarehouse && card && card.id && !Array.isArray(card.labels)) {
+  var projectType = scheduler.projectTypeFromLabels(card);
+  if (projectType === 'residential' && card && card.id && !Array.isArray(card.labels)) {
     // Webhook card payloads can arrive without labels; fetch them once.
-    try { isWarehouse = scheduler.hasWarehouseLabel(await trello.getCard(card.id)); } catch (e) {}
+    try { projectType = scheduler.projectTypeFromLabels(await trello.getCard(card.id)); } catch (e) {}
   }
-  if (isWarehouse) console.log('[task-chain] Warehouse label: hours scaled to 25%');
+  console.log('[task-chain] Project type: ' + projectType +
+    ' (base ' + scheduler.TYPE_BENCHMARKS[projectType] + ' sq ft)');
 
   // --- Ensure main Checklist + Checklist Archive exist ---
   var { main, archive } = await ensureCardChecklists(card.id);
@@ -532,7 +610,7 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   // Restored items keep their existing name (follow-up counters, renamed
   // titles); only the hidden start-date marker and due date are refreshed.
   // Completed restored items stay untouched (work already done).
-  await applyScheduleToItems(card.id, addedItems, hoursMap, projectSqFt, isWarehouse);
+  await applyScheduleToItems(card.id, addedItems, meta, projectSqFt, projectType);
 
   // All newly added items remain unchecked. Humans check items as work is completed.
 
