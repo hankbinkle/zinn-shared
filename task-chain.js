@@ -210,13 +210,6 @@ async function getFilteredTaskChain(card, phaseWhitelist) {
     // Leads ZPTB cards are universal - skip phase check
     if (cardPhase !== 'leads' && (!cardPhase || !phaseLabels.has(cardPhase))) continue;
     var zptLabels = (zc.labels || []).map(function(l) { return l.name.toLowerCase(); });
-    // A card may demand every listed label, not just one. Write
-    // "require_labels: commercial, life_safety" in its description.
-    var reqMatch = String(zc.desc || '').match(/^\s*require_labels\s*:\s*(.+)$/im);
-    if (reqMatch) {
-      var required = reqMatch[1].split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
-      if (required.length && !required.every(function(l) { return projectLabels.includes(l); })) continue;
-    }
     if (zptLabels.length > 0 && !zptLabels.some(function(l) { return projectLabels.includes(l); })) continue;
     result.push({
       zptCard: zc,
