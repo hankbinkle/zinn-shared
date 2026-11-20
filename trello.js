@@ -4,13 +4,21 @@
 // =============================================================================
 'use strict';
 
-const nodeFetch = require('node-fetch');
+// node-fetch v3 is ESM-only, so require() throws ERR_REQUIRE_ESM before any
+// shape check can run - guard it and fall back to the runtime's native fetch
+// (Node 18+). v2 still resolves as a CommonJS function on Railway containers.
+let nodeFetch = null;
+try {
+  nodeFetch = require('node-fetch');
+} catch (e) {
+  nodeFetch = null;
+}
 // node-fetch v2 exports a function; v3 is an ESM module whose default is the
 // function. Fall back to the runtime's native fetch when neither shape exists,
 // so local Mac scripts and Railway containers both resolve a callable fetch.
 const fetch = typeof nodeFetch === 'function'
   ? nodeFetch
-  : (typeof nodeFetch.default === 'function' ? nodeFetch.default : globalThis.fetch);
+  : (nodeFetch && typeof nodeFetch.default === 'function' ? nodeFetch.default : globalThis.fetch);
 const https = require('https');
 const { TRELLO_KEY, TRELLO_TOKEN } = require('./config');
 

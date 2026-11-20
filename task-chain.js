@@ -210,6 +210,13 @@ async function getFilteredTaskChain(card, phaseWhitelist) {
     // Leads ZPTB cards are universal - skip phase check
     if (cardPhase !== 'leads' && (!cardPhase || !phaseLabels.has(cardPhase))) continue;
     var zptLabels = (zc.labels || []).map(function(l) { return l.name.toLowerCase(); });
+    // A card may demand every listed label, not just one. Write
+    // "require_labels: commercial, life_safety" in its description.
+    var reqMatch = String(zc.desc || '').match(/^\s*require_labels\s*:\s*(.+)$/im);
+    if (reqMatch) {
+      var required = reqMatch[1].split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+      if (required.length && !required.every(function(l) { return projectLabels.includes(l); })) continue;
+    }
     if (zptLabels.length > 0 && !zptLabels.some(function(l) { return projectLabels.includes(l); })) continue;
     result.push({
       zptCard: zc,
@@ -411,10 +418,17 @@ async function fetchChainMeta(taskChain) {
 async function applyScheduleToItems(cardId, addedItems, meta, projectSqFt, projectType) {
   if (!addedItems || addedItems.length === 0) return;
 
+  // Items already on the checklist are recorded as null so the chain order is
+  // preserved. They take no slot and get no new dates; only the real additions
+  // are scheduled below. (Before 2026-11-20 this loop assumed no nulls and
+  // crashed whenever a single new task was inserted into a populated chain.)
+  var active = addedItems.filter(function(x) { return !!x; });
+  if (!active.length) return;
+
   var hoursList = [];
   var prevGateName = null;
-  for (var i = 0; i < addedItems.length; i++) {
-    var zc = addedItems[i].item.zptCard;
+  for (var i = 0; i < active.length; i++) {
+    var zc = active[i].item.zptCard;
     var sl = zc.shortLink;
     var info = meta[sl] || { name: zc.name, hours: 0, followUp: null };
 
@@ -443,9 +457,9 @@ async function applyScheduleToItems(cardId, addedItems, meta, projectSqFt, proje
 
   var schedule = scheduler.calculateSchedule(hoursList, new Date());
 
-  for (var i = 0; i < addedItems.length; i++) {
-    if (!addedItems[i] || !schedule[i]) continue;
-    var entry = addedItems[i];
+  for (var i = 0; i < active.length; i++) {
+    if (!schedule[i]) continue;
+    var entry = active[i];
     var s = schedule[i];
     if (!s.dueISO && !s.startISO) continue;
 
