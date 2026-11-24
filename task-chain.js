@@ -4,6 +4,9 @@
 // =============================================================================
 'use strict';
 
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const trello = require('./trello');
 const scheduler = require('./scheduler');
 const ZPT_BOARD_ID = '66f2e19a4dd7012acc370148';
@@ -228,9 +231,58 @@ function extractShortLinkFromCheckitem(rawName) {
   // Accepts bare short links (/c/ABC123), slug-suffixed links
   // (/c/ABC123/task-title), and query-suffixed links (/c/ABC123?duration_days=1).
   // Full 24-char card IDs are captured too — the Trello API resolves them the
-  // same as short links. Returns null for non-ZPT checkitems.
+  // same as short links. A team-selector link (which opens a Railway page
+  // instead of the template card) carries the template shortLink in ?zpt=.
+  // Returns null for non-ZPT checkitems.
   var m = rawName.match(/^\[.+?\]\(https?:\/\/trello\.com\/c\/([a-zA-Z0-9]+)(?:[\/?#][^)]*)?\)/);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  var sel = rawName.match(/^\[.+?\]\(https?:\/\/[^)]*team-selector[^)]*[?&]zpt=([a-zA-Z0-9]+)[^)]*\)/i);
+  return sel ? sel[1] : null;
+}
+
+/**
+ * Team selector link builder.
+ *
+ * A ZPT card with a "## Selector" section (value: gc, design_build,
+ * engineering or structural) opens the team selector page instead of the
+ * Trello template card. The URL carries the project card shortLink, the
+ * template shortLink and a signature.
+ */
+function teamSelectorSecret() {
+  if (process.env.TEAM_SELECTOR_SECRET) return process.env.TEAM_SELECTOR_SECRET.trim();
+  try {
+    return fs.readFileSync(path.join(process.env.HOME || '/root', '.openclaw', 'credentials', 'team_selector_secret.txt'), 'utf8').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function selectorModeOf(zptCard) {
+  const sections = trello.parseSections((zptCard && zptCard.desc) || '');
+  for (const key of Object.keys(sections)) {
+    if (key.trim().toLowerCase() === 'selector') {
+      const v = String(sections[key] || '').trim().split(/\s+/)[0].toLowerCase();
+      return v || '';
+    }
+  }
+  return '';
+}
+
+function buildCheckitemUrl(zptCard, projectCard) {
+  const trelloUrl = zptCard.shortUrl || ('https://trello.com/c/' + zptCard.shortLink);
+  const mode = selectorModeOf(zptCard);
+  if (!mode) return trelloUrl;
+  const cardRef = (projectCard && (projectCard.shortLink || projectCard.id)) || '';
+  const secret = teamSelectorSecret();
+  if (!cardRef || !secret) {
+    console.log('[task-chain] selector link unavailable for ' + zptCard.shortLink + ' (card or secret missing)');
+    return trelloUrl;
+  }
+  const base = (process.env.TEAM_SELECTOR_BASE_URL || 'https://team-selector-production-a0638701.up.railway.app').replace(/\/$/, '');
+  const payload = [cardRef, zptCard.shortLink, mode].join('|').toLowerCase();
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex').slice(0, 32);
+  return base + '/?card=' + encodeURIComponent(cardRef) + '&zpt=' + encodeURIComponent(zptCard.shortLink) +
+    '&mode=' + mode + '&t=' + sig;
 }
 
 async function getExistingZptCardIds(cardId) {
@@ -408,7 +460,7 @@ async function fetchChainMeta(taskChain) {
  * Apply scheduling to newly added checkitems: set due dates and update names
  * with hidden start date markdown for board-visualizer compatibility.
  */
-async function applyScheduleToItems(cardId, addedItems, meta, projectSqFt, projectType) {
+async function applyScheduleToItems(cardId, addedItems, meta, projectSqFt, projectType, projectCard) {
   if (!addedItems || addedItems.length === 0) return;
 
   // Items already on the checklist are recorded as null so the chain order is
@@ -458,7 +510,7 @@ async function applyScheduleToItems(cardId, addedItems, meta, projectSqFt, proje
 
     var ci = entry.checkItemId;
     var zc = entry.item.zptCard;
-    var baseUrl = zc.shortUrl || 'https://trello.com/c/' + zc.shortLink;
+    var baseUrl = buildCheckitemUrl(zc, projectCard);
     var hiddenMd = scheduler.buildDurationMarkdown(s.scaledHours);
 
     if (entry.restored) {
@@ -617,7 +669,7 @@ async function populateEntireTaskChain(card, taskChain, entrySubphaseListName, l
   // Restored items keep their existing name (follow-up counters, renamed
   // titles); only the hidden start-date marker and due date are refreshed.
   // Completed restored items stay untouched (work already done).
-  await applyScheduleToItems(card.id, addedItems, meta, projectSqFt, projectType);
+  await applyScheduleToItems(card.id, addedItems, meta, projectSqFt, projectType, card);
 
   // All newly added items remain unchecked. Humans check items as work is completed.
 
@@ -637,6 +689,7 @@ module.exports = {
   getAllZptCards,
   getFilteredTaskChain,
   extractShortLinkFromCheckitem,
+  buildCheckitemUrl,
   getExistingZptCardIds,
   isTaskChainPopulated,
   getCardZptItemsInOrder,
