@@ -439,16 +439,36 @@ class QBOClient {
 
     // 4. surname-unique fallback (cards say "Dunsong and Teresa Yang", QBO has
     //    "Dunsong Yang"; Shireen's own example: "Judi and Willie Alvarado" -> "Willie Alvarado")
-    const surname = targetClient.split(/\s+/).pop();
-    if (surname && surname.length > 2) {
-      const surnameMatches = list.filter((c) => {
-        const parts = dn(c).split(/\s+/);
-        return parts[parts.length - 1] === surname;
-      });
-      if (surnameMatches.length === 1) return { client: surnameMatches[0], project: null, method: 'surname', ambiguous: false, warnings };
-      if (surnameMatches.length > 1) {
-        warnings.push('surname "' + surname + '" matches multiple customers: ' + surnameMatches.map((c) => c.DisplayName).join(' | '));
-        return { client: null, project: null, method: 'surname', ambiguous: true, warnings };
+    //
+    //    A COMPANY HAS NO SURNAME (Rob 2026-11-24). The old check took the last
+    //    whitespace word of the card's client name, so "Blue Harbor Capital
+    //    Group, LLC" produced the surname "LLC" and matched every customer
+    //    ending in LLC (1839 South Lane Plaza LLC, The Avail Group, LLC) - a
+    //    stop error on a client that was simply new. Legal endings and trailing
+    //    punctuation are stripped on BOTH sides, and the fallback never runs for
+    //    a company name (legal ending or a business word such as Group/Capital/
+    //    Holdings). People names keep the safety net unchanged.
+    const LEGAL_SUFFIX = new Set(['llc', 'l.l.c.', 'inc', 'inc.', 'co', 'co.', 'corp', 'corp.', 'corporation', 'ltd', 'ltd.', 'lp', 'l.p.', 'llp', 'pllc', 'pc', 'p.c.', 'pa', 'p.a.']);
+    const COMPANY_WORDS = new Set(['group', 'capital', 'holdings', 'partners', 'ventures', 'properties', 'property', 'realty', 'investments', 'investment', 'management', 'development', 'developments', 'associates', 'services', 'company', 'enterprises', 'industries', 'trust', 'foundation', 'bank', 'financial']);
+    const nameWords = (s) => norm(s).replace(/[.,;:()]/g, ' ').split(/\s+/).filter(Boolean);
+    const surnameOf = (name) => {
+      const w = nameWords(name);
+      while (w.length && LEGAL_SUFFIX.has(w[w.length - 1])) w.pop();
+      return w.length ? w[w.length - 1] : '';
+    };
+    const isCompanyName = (name) => {
+      const w = nameWords(name);
+      return w.some((t) => LEGAL_SUFFIX.has(t) || COMPANY_WORDS.has(t));
+    };
+    if (!isCompanyName(clientName)) {
+      const surname = surnameOf(clientName);
+      if (surname && surname.length > 2) {
+        const surnameMatches = list.filter((c) => !c.ParentRef && surnameOf(c.DisplayName) === surname);
+        if (surnameMatches.length === 1) return { client: surnameMatches[0], project: null, method: 'surname', ambiguous: false, warnings };
+        if (surnameMatches.length > 1) {
+          warnings.push('surname "' + surname + '" matches multiple customers: ' + surnameMatches.map((c) => c.DisplayName).join(' | '));
+          return { client: null, project: null, method: 'surname', ambiguous: true, warnings };
+        }
       }
     }
 

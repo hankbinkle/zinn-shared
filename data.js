@@ -213,6 +213,49 @@ function parseFeeLines(text) {
   return result;
 }
 
+// ── Consulting engineer fee lines (Rob 2026-11-24) ───────────────────────────
+// A prime proposal can carry other firms' fees. ZINN sends the client one prime
+// total and pays each consulting engineer out of the money received, so these
+// lines are pass-through: never ZINN's own contracted fee.
+//
+// Convention (enforced by the shipped Fee-section legend):
+//   "<Discipline> Engineering (Firm Name): $15,000"
+// The discipline comes first; the firm, when known, is the trailing
+// parenthesis. Disciplines are Rob's fixed list. Architecture is always ZINN's
+// own fee; a line that starts with "Architecture" is never a consultant.
+const ENGINEER_DISCIPLINES = [
+  { key: 'mechanical', re: /^mechanical\b/i },
+  { key: 'plumbing', re: /^plumbing\b/i },
+  { key: 'electrical', re: /^electrical\b/i },
+  { key: 'structural', re: /^structural\b/i },
+  { key: 'fire protection', re: /^fire\s*(protection|suppression|sprinkler)/i },
+  { key: 'civil', re: /^civil\b/i },
+  { key: 'landscape', re: /^landscape\b/i },
+];
+
+/**
+ * Identify a consulting engineer fee line. Returns null for ZINN's own fee
+ * lines (Architecture, Design Fee, Bid Support, Construction Administration).
+ * @param {string} label - the text before the colon on a Fee-section line
+ * @returns {null|{discipline: string, key: string, firm: string}}
+ */
+function consultingEngineerInfo(label) {
+  const clean = String(label || '').replace(/^[-*\u2022]\s*/, '').trim();
+  if (!clean || /^architect/i.test(clean)) return null;
+  let hit = null;
+  for (let i = 0; i < ENGINEER_DISCIPLINES.length; i++) {
+    if (ENGINEER_DISCIPLINES[i].re.test(clean)) { hit = ENGINEER_DISCIPLINES[i]; break; }
+  }
+  if (!hit) return null;
+  const firmMatch = clean.match(/\(([^)]+)\)\s*$/);
+  const discipline = clean
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/\s+engineering\s*$/i, '')
+    .replace(/[,\s]+$/, '')
+    .trim() || hit.key;
+  return { discipline, key: hit.key, firm: firmMatch ? firmMatch[1].trim() : '' };
+}
+
 module.exports = {
   isYes,
   esc,
@@ -220,6 +263,7 @@ module.exports = {
   loadFrontMatter,
   normalizeAmount,
   parseFeeLines,
+  consultingEngineerInfo,
 };
 
 module.exports.VERSION = '1.0.0';
